@@ -4,7 +4,7 @@ version: 0.0.0
 repository: https://github.com/dart-stack/mysql_connector
 
 environment:
-  sdk: ^3.2.4
+  sdk: ^3.0.0
 
 dependencies:
   benchmark: ^0.3.0
