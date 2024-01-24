@@ -1,8 +1,6 @@
 import '../command.dart';
 
-class ResetConnectionParams {
-  const ResetConnectionParams();
-}
+typedef ResetConnectionParams = ();
 
 final class ResetConnection extends CommandBase<ResetConnectionParams, void> {
   ResetConnection(CommandContext context) : super(context);

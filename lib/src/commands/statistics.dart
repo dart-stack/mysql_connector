@@ -1,9 +1,7 @@
 import 'package:mysql_connector/src/command.dart';
 import 'package:mysql_connector/src/utils.dart';
 
-class StatisticsParams {
-  const StatisticsParams();
-}
+typedef StatisticsParams = ();
 
 final class Statistics extends CommandBase<StatisticsParams, String> {
   Statistics(CommandContext context) : super(context);

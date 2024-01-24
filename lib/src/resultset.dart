@@ -4,20 +4,13 @@ import 'session.dart';
 import 'socket.dart';
 import 'utils.dart';
 
-Future<ResultSet> readResultSet(
-  PacketSocketReader reader,
-  SessionContext session,
-  bool binary,
-) async {
-  return ResultSet.fromReader(reader, session, binary);
-}
-
 class ResultSet {
   static const fieldNumColumns = "numColumns";
   static const fieldColumns = "columns";
   static const fieldRows = "rows";
 
-  static Future<ResultSet> fromReader(
+  // TODO: Deprecate PacketSocketReader, and use Stream instead.
+  static Future<ResultSet> fromSocket(
     PacketSocketReader reader,
     SessionContext session,
     bool binary,
@@ -39,7 +32,7 @@ class ResultSet {
     props[fieldRows] = [];
     for (int i = 0;; i++) {
       final buffer = await reader.readPacket();
-      switch (buffer[4]) {
+      switch (buffer[standardPacketPayloadOffset + 0]) {
         case 0xFE:
           return ResultSet._internal(props);
 
@@ -69,7 +62,7 @@ class ResultSet {
 
   const ResultSet._internal(this.props);
 
-  int get numberOfCols => props[fieldNumColumns];
+  int get numberOfColumns => props[fieldNumColumns];
 
   List<FieldDefinition> get columns => props[fieldColumns];
 
@@ -118,8 +111,8 @@ class FieldDefinition {
     props[fieldOriginalTableName] = readLengthEncodedString(buffer, cursor);
     props[fieldFieldName] = readLengthEncodedString(buffer, cursor);
     props[fieldOriginalFieldName] = readLengthEncodedString(buffer, cursor);
-    props[fieldNumExtendedInfo] = readLengthEncodedInteger(buffer, cursor);
     if (session.hasCapabilities(capMariadbClientExtendedTypeInfo)) {
+      props[fieldNumExtendedInfo] = readLengthEncodedInteger(buffer, cursor);
       props[fieldExtendedInfo] = [];
       for (int i = 0; i < props[fieldNumExtendedInfo]; i++) {
         props[fieldExtendedInfo].add({
@@ -177,7 +170,7 @@ class TextResultRow {
   static Future<TextResultRow> fromReader(
     PacketSocketReader reader,
     SessionContext session,
-    int numberOfCols,
+    int numberOfColumns,
   ) async {
     final props = <String, dynamic>{};
     final cursor = Cursor.zero();
@@ -185,7 +178,7 @@ class TextResultRow {
 
     cursor.increase(standardPacketHeaderLength);
     props[fieldColumns] = [];
-    for (int i = 0; i < numberOfCols; i++) {
+    for (int i = 0; i < numberOfColumns; i++) {
       props[fieldColumns].add({
         fieldColumnData: readLengthEncodedString(buffer, cursor),
       });
@@ -209,7 +202,7 @@ class BinaryResultRow {
   static Future<BinaryResultRow> fromReader(
     PacketSocketReader reader,
     SessionContext session,
-    int numberOfCols,
+    int numberOfColumns,
   ) async {
     final props = <String, dynamic>{};
     final cursor = Cursor.zero();
@@ -217,9 +210,9 @@ class BinaryResultRow {
 
     cursor.increase(standardPacketHeaderLength);
     props[fieldNullBitmap] =
-        readBytes(buffer, cursor, ((numberOfCols + 9) / 8).floor());
+        readBytes(buffer, cursor, ((numberOfColumns + 9) / 8).floor());
     props[fieldColumns] = [];
-    for (int i = 0; i < numberOfCols; i++) {
+    for (int i = 0; i < numberOfColumns; i++) {
       props[fieldColumns].add({
         fieldColumnData: null,
       });

@@ -1,8 +1,6 @@
 import '../command.dart';
 
-class QuitParams {
-  const QuitParams();
-}
+typedef QuitParams = ();
 
 final class Quit extends CommandBase<QuitParams, void> {
   Quit(CommandContext context) : super(context);

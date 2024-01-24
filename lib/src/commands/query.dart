@@ -6,13 +6,7 @@ import '../common.dart';
 import '../packet.dart';
 import '../resultset.dart';
 
-class QueryParams {
-  final String sql;
-
-  const QueryParams({
-    required this.sql,
-  });
-}
+typedef QueryParams = ({String sqlStatement});
 
 final class Query extends CommandBase<QueryParams, dynamic> {
   Query(CommandContext context) : super(context);
@@ -24,7 +18,7 @@ final class Query extends CommandBase<QueryParams, dynamic> {
     sendCommand([
       createPacket()
         ..addByte(0x03)
-        ..addString(params.sql),
+        ..addString(params.sqlStatement),
     ]);
 
     return handleResponse();
@@ -34,7 +28,7 @@ final class Query extends CommandBase<QueryParams, dynamic> {
     var packet = await socketReader.readPacket();
     switch (packet[4]) {
       case 0x00:
-        final props = readOkPacket(packet);
+        final props = OkPacket.from(packet, session);
         logger.debug(props);
 
         release();
@@ -42,15 +36,15 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         return;
 
       case 0xFF:
-        final props = readErrPacket(packet);
+        final props = ErrPacket.from(packet, session);
         logger.debug(props);
 
         release();
 
         return Future.error(MysqlExecutionException(
-          props["errorCode"],
-          props["message"],
-          props["sqlState"],
+          props.errorCode,
+          props.errorMessage,
+          props.sqlState,
         ));
 
       case 0xFB:
@@ -72,24 +66,24 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         packet = await socketReader.readPacket();
         switch (packet[4]) {
           case 0x00:
-            final props = readOkPacket(packet);
-            logger.debug(props);
+            final ok = OkPacket.from(packet, session);
+            logger.debug(ok);
 
             release();
-            return Future.value(props);
+            return Future.value(ok);
 
           case 0xFF:
-            final props = readErrPacket(packet);
-            logger.debug(props);
+            final err = ErrPacket.from(packet, session);
+            logger.debug(err);
 
             release();
-            return Future.error(props["message"]);
+            return Future.error(err.errorCode);
         }
 
       default:
         socketReader.cursor.increase(-packet.length);
-        final result = await readResultSet(socketReader, session, false);
-        print("result set was fetched ${result.rows.length} rows");
+        final result = await ResultSet.fromSocket(socketReader, session, false);
+        print("${result.rows.length} rows was fetched");
 
         release();
         return result;

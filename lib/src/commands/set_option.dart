@@ -2,13 +2,7 @@ import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/command.dart';
 import 'package:mysql_connector/src/packet.dart';
 
-class SetOptionParams {
-  final bool enableMultiStmts;
-
-  const SetOptionParams({
-    required this.enableMultiStmts,
-  });
-}
+typedef SetOptionParams = ({bool enableMultiStatements});
 
 final class SetOption extends CommandBase<SetOptionParams, void> {
   SetOption(CommandContext context) : super(context);
@@ -20,14 +14,14 @@ final class SetOption extends CommandBase<SetOptionParams, void> {
       sendCommand([
         createPacket()
           ..addByte(0x1B)
-          ..addInteger(2, params.enableMultiStmts ? 0 : 1),
+          ..addInteger(2, params.enableMultiStatements ? 0 : 1),
       ]);
 
       final packet = await socketReader.readPacket();
       if (packet[4] == 0xFE) {
         return;
       } else {
-        final err = ErrPacket(readErrPacket(packet));
+        final err = ErrPacket.from(packet, session);
         throw MysqlExecutionException(
           err.errorCode,
           err.errorMessage,

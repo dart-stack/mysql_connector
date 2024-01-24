@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:mysql_connector/src/common.dart';
+import 'package:mysql_connector/src/session.dart';
+import 'package:mysql_connector/src/socket.dart';
+
 import 'utils.dart';
 
 void writeBytes(BytesBuilder writer, List<int> value) {
@@ -203,66 +207,6 @@ class PacketBuilder {
   }
 }
 
-Map<String, dynamic> readOkPacket(List<int> buffer, [Cursor? cursor]) {
-  cursor ??= Cursor.zero();
-
-  final props = <String, dynamic>{};
-
-  cursor.increase(standardPacketHeaderLength);
-  cursor.increase(1); // note: skip indicator byte
-
-  props["affectedRows"] = readLengthEncodedInteger(buffer, cursor);
-  props["lastInsertId"] = readLengthEncodedInteger(buffer, cursor);
-  props["serverStatus"] = readInteger(buffer, cursor, 2);
-  props["numWarnings"] = readInteger(buffer, cursor, 2);
-
-  return props;
-}
-
-Map<String, dynamic> readErrPacket(List<int> buffer, [Cursor? cursor]) {
-  cursor ??= Cursor.zero();
-
-  final props = <String, dynamic>{};
-
-  final payloadLength = readInteger(buffer, cursor, 3);
-  cursor.increase(1);
-  cursor.increase(1); // note: skip indicator byte
-
-  props["errorCode"] = readInteger(buffer, cursor, 2);
-  if (props["errorCode"] == 0xffff) {
-    props["stage"] = readInteger(buffer, cursor, 1);
-    props["maxStage"] = readInteger(buffer, cursor, 1);
-    props["progress"] = readInteger(buffer, cursor, 3);
-    props["progressInfo"] = readLengthEncodedString(buffer, cursor);
-  } else {
-    if (buffer[cursor.position] == 0x23) {
-      cursor.increase(1);
-      props["sqlState"] = readString(buffer, cursor, 5);
-      props["message"] = readString(buffer, cursor,
-          standardPacketHeaderLength + payloadLength - cursor.position);
-    } else {
-      props["message"] = readString(buffer, cursor,
-          standardPacketHeaderLength + payloadLength - cursor.position);
-    }
-  }
-
-  return props;
-}
-
-Map<String, dynamic> readEofPacket(List<int> buffer, [Cursor? cursor]) {
-  cursor ??= Cursor.zero();
-
-  final props = <String, dynamic>{};
-
-  cursor.increase(standardPacketHeaderLength);
-  cursor.increase(1); // note: skip leading byte
-
-  props["numWarnings"] = readInteger(buffer, cursor, 2);
-  props["serverStatus"] = readInteger(buffer, cursor, 2);
-
-  return props;
-}
-
 Map<String, dynamic> readLocalInfilePacket(List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
 
@@ -277,53 +221,181 @@ Map<String, dynamic> readLocalInfilePacket(List<int> buffer, [Cursor? cursor]) {
 }
 
 class OkPacket {
+  static const fieldAffectedRows = "affectedRows";
+  static const fieldLastInsertId = "lastInsertId";
+  static const fieldServerStatus = "serverStatus";
+  static const fieldNumWarning = "numWarning";
+  static const fieldInfo = "info";
+  static const fieldSessionStateInfo = "sessionStateInfo";
+
+  static OkPacket from(
+    List<int> buffer,
+    SessionContext session, [
+    Cursor? cursor,
+  ]) {
+    cursor ??= Cursor.zero();
+    final props = <String, dynamic>{};
+
+    cursor.increase(standardPacketHeaderLength + 1);
+    props[fieldAffectedRows] = readLengthEncodedInteger(buffer, cursor);
+    props[fieldLastInsertId] = readLengthEncodedInteger(buffer, cursor);
+    props[fieldServerStatus] = readInteger(buffer, cursor, 2);
+    props[fieldNumWarning] = readInteger(buffer, cursor, 2);
+    if (cursor.position < buffer.length) {
+      props[fieldInfo] = readLengthEncodedString(buffer, cursor);
+      if (session.hasCapabilities(capClientSessionTrack) &&
+          (props[fieldServerStatus] & serverSessionStateChanged) > 0) {
+        props[fieldSessionStateInfo] = readLengthEncodedString(buffer, cursor);
+      }
+    }
+
+    return OkPacket._internal(props);
+  }
+
+  static Future<OkPacket> fromSocket(
+    PacketSocketReader reader,
+    SessionContext session,
+  ) async {
+    return from(await reader.readPacket(), session);
+  }
+
   final Map<String, dynamic> props;
 
-  const OkPacket(this.props);
+  const OkPacket._internal(this.props);
 
-  int get affectedRows => props["affectedRows"];
+  int get affectedRows => props[fieldAffectedRows];
 
-  int get lastInsertId => props["lastInsertId"];
+  int get lastInsertId => props[fieldLastInsertId];
 
-  int get serverStatus => props["serverStatus"];
+  int get serverStatus => props[fieldServerStatus];
 
-  int get numberOfWarnings => props["numWarnings"];
+  int get numberOfWarnings => props[fieldNumWarning];
+
+  String get info => props[fieldInfo];
+
+  String get sessionStateInfo => props[fieldSessionStateInfo];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
 }
 
 class ErrPacket {
+  static const fieldErrorCode = "errorCode";
+  static const fieldStage = "stage";
+  static const fieldMaxStage = "maxStage";
+  static const fieldProgress = "progress";
+  static const fieldProgressInfo = "progressInfo";
+  static const fieldSqlState = "sqlState";
+  static const fieldErrorMessage = "errorMessage";
+
+  static ErrPacket from(
+    List<int> buffer,
+    SessionContext session, [
+    Cursor? cursor,
+  ]) {
+    cursor ??= Cursor.zero();
+    final props = <String, dynamic>{};
+
+    cursor.increase(standardPacketHeaderLength + 1);
+    props[fieldErrorCode] = readInteger(buffer, cursor, 2);
+    if (props[fieldErrorCode] == 0xffffff) {
+      props[fieldStage] = readInteger(buffer, cursor, 1);
+      props[fieldMaxStage] = readInteger(buffer, cursor, 1);
+      props[fieldProgress] = readInteger(buffer, cursor, 3);
+      props[fieldProgressInfo] = readLengthEncodedString(buffer, cursor);
+    } else {
+      if (buffer[cursor.position] == 35) {
+        cursor.increase(1);
+        props[fieldSqlState] = readString(buffer, cursor, 5);
+        props[fieldErrorMessage] =
+            readString(buffer, cursor, buffer.length - cursor.position);
+      } else {
+        props[fieldErrorMessage] =
+            readString(buffer, cursor, buffer.length - cursor.position);
+      }
+    }
+
+    return ErrPacket._internal(props);
+  }
+
+  static Future<ErrPacket> fromSocket(
+    PacketSocketReader reader,
+    SessionContext session,
+  ) async {
+    return from(await reader.readPacket(), session);
+  }
+
   final Map<String, dynamic> props;
 
-  const ErrPacket(this.props);
+  const ErrPacket._internal(this.props);
 
-  int get errorCode => props["errorCode"];
+  int get errorCode => props[fieldErrorCode];
 
-  bool get progressReport => errorCode == 0xFFFF;
+  bool get isProgressReport => errorCode == 0xFFFF;
 
-  int get stage => props["stage"];
+  int get stage => props[fieldStage];
 
-  int get maxStage => props["maxStage"];
+  int get maxStage => props[fieldMaxStage];
 
-  int get progress => props["progress"];
+  int get progress => props[fieldProgress];
 
-  String get progressInfo => props["progressInfo"];
+  String get progressInfo => props[fieldProgressInfo];
 
-  String get sqlState => props["sqlState"];
+  String? get sqlState => props[fieldSqlState];
 
-  String get errorMessage => props["message"];
+  String get errorMessage => props[fieldErrorMessage];
+
+  void throwIfError(Exception Function(ErrPacket error) exceptionFactory) {
+    if (!isProgressReport) {
+      final exception = exceptionFactory.call(this);
+      throw exception;
+    }
+  }
+
+  @override
+  String toString() {
+    return props.toString();
+  }
 }
 
 class EofPacket {
+  static const fieldNumWarnings = "numWarnings";
+  static const fieldServerStatus = "serverStatus";
+
+  static EofPacket from(
+    List<int> buffer,
+    SessionContext session, [
+    Cursor? cursor,
+  ]) {
+    cursor ??= Cursor.zero();
+    final props = <String, dynamic>{};
+
+    cursor.increase(standardPacketHeaderLength + 1);
+    props[fieldNumWarnings] = readInteger(buffer, cursor, 2);
+    props[fieldServerStatus] = readInteger(buffer, cursor, 2);
+
+    return EofPacket._internal(props);
+  }
+
+  static Future<EofPacket> fromSocket(
+    PacketSocketReader reader,
+    SessionContext session,
+  ) async {
+    return from(await reader.readPacket(), session);
+  }
+
   final Map<String, dynamic> props;
 
-  const EofPacket(this.props);
+  const EofPacket._internal(this.props);
 
-  int get numberOfWarnings => props["numWarnings"];
+  int get numberOfWarnings => props[fieldNumWarnings];
 
-  int get serverStatus => props["serverStatus"];
-}
+  int get serverStatus => props[fieldServerStatus];
 
-extension IntListExtension on List<int> {
-  String toHex() {
-    return map((x) => x.toRadixString(16)).join();
+  @override
+  String toString() {
+    return props.toString();
   }
 }

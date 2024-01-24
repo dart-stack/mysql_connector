@@ -1,6 +1,6 @@
-// Capabilities
 import 'dart:io';
 
+// Capabilities
 const capClientMysql = 1;
 const capFoundRows = 2;
 const capConnectWithDB = 8;
@@ -81,6 +81,22 @@ const fieldSet = 2048;
 const fieldNoDefaultValue = 4096;
 const fieldOnUpdateNow = 8192;
 const fieldNum = 32768;
+
+// Server status flag
+const serverStatusInTrans = 1;
+const serverStatusAutocommit = 2;
+const serverMoreResultsExists = 8;
+const serverQueryNoGoodIndexUsed = 16;
+const serverQueryNoIndexUsed = 32;
+const serverStatusCursorExists = 64;
+const serverStatusLastRowSent = 128;
+const serverStatusDbDropped = 1 << 8;
+const serverStatusNoBackslashEscapes = 1 << 9;
+const serverStatusMetadataChanged = 1 << 10;
+const serverQueryWasSlow = 1 << 11;
+const serverPsOutParams = 1 << 12;
+const serverStatusInTransReadonly = 1 << 13;
+const serverSessionStateChanged = 1 << 14;
 
 class ConnectOptions {
   final String host;

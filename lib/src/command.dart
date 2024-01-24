@@ -19,10 +19,10 @@ abstract interface class CommandContext {
   void sendCommand(List<PacketBuilder> commands);
 }
 
-abstract base class CommandBase<P, T> {
+abstract base class _CommandBase {
   final CommandContext _context;
 
-  CommandBase(this._context);
+  _CommandBase(this._context);
 
   Logger get logger => _context.logger;
 
@@ -47,6 +47,10 @@ abstract base class CommandBase<P, T> {
   PacketBuilder createPacket() {
     return _context.createPacket();
   }
+}
+
+abstract base class CommandBase<P, T> extends _CommandBase {
+  CommandBase(CommandContext context) : super(context);
 
   Future<T> execute(P params);
 }

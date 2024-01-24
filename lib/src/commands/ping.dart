@@ -1,8 +1,6 @@
 import '../command.dart';
 
-class PingParams {
-  const PingParams();
-}
+typedef PingParams = ();
 
 final class Ping extends CommandBase<PingParams, void> {
   Ping(CommandContext context) : super(context);

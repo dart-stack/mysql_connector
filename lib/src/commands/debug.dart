@@ -2,9 +2,7 @@ import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/command.dart';
 import 'package:mysql_connector/src/packet.dart';
 
-class DebugParams {
-  const DebugParams();
-}
+typedef DebugParams = ();
 
 final class Debug extends CommandBase<DebugParams, void> {
   Debug(CommandContext context) : super(context);
@@ -21,7 +19,7 @@ final class Debug extends CommandBase<DebugParams, void> {
           return;
 
         case 0xFF:
-          final err = ErrPacket(readErrPacket(packet));
+          final err = ErrPacket.from(packet, session);
           throw MysqlExecutionException(
             err.errorCode,
             err.errorMessage,

@@ -286,6 +286,7 @@ class Connection {
         _logger,
         _socket,
         _session,
+        _session,
         _connectOptions,
       );
       await handshaker.perform();
@@ -324,18 +325,14 @@ class Connection {
 
   Future<void> ping() async {
     final command = Ping(commandContext);
-    final params = PingParams();
 
-    return command.execute(params);
+    return command.execute(());
   }
 
-  Future<dynamic> query(String sql) async {
+  Future<dynamic> query(String sqlStatement) async {
     final command = Query(commandContext);
-    final params = QueryParams(
-      sql: sql,
-    );
 
-    return command.execute(params);
+    return command.execute((sqlStatement: sqlStatement));
   }
 
   // Future<PreparedStatement> prepare(String sql) async {
@@ -406,7 +403,7 @@ class Connection {
   // }
 }
 
-class _SessionContext implements SessionContext, HandshakeDelegate {
+class _SessionContext implements SessionContext, HandshakerDelegate {
   int _protocolVersion = 0;
 
   String _serverVersion = "";

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:mysql_connector/src/session.dart';
+
 import 'common.dart';
 import 'utils.dart';
 import 'packet.dart';
@@ -10,7 +12,7 @@ import 'authentication.dart';
 import 'logging.dart';
 import 'socket.dart';
 
-abstract interface class HandshakeDelegate {
+abstract interface class HandshakerDelegate {
   void setProtocolVersion(int protocolVersion);
 
   void setServerVersion(String serverVersion);
@@ -42,7 +44,9 @@ class Handshaker {
 
   final PacketSocket _socket;
 
-  final HandshakeDelegate _delegate;
+  final SessionContext _session;
+
+  final HandshakerDelegate _delegate;
 
   final ConnectOptions _connectOptions;
 
@@ -53,6 +57,7 @@ class Handshaker {
   Handshaker(
     this._logger,
     this._socket,
+    this._session,
     this._delegate,
     this._connectOptions,
   );
@@ -84,8 +89,8 @@ class Handshaker {
   Future<void> handleAuthResponse(List<int> message) async {
     switch (message[4]) {
       case 0x00:
-        final props = readOkPacket(message);
-        _logger.debug(props);
+        final ok = OkPacket.from(message, _session);
+        _logger.debug(ok);
         _logger.debug("authentication was successful");
 
         _setHandshakeState(HandshakeState.completed);
@@ -93,14 +98,15 @@ class Handshaker {
         return;
 
       case 0xFF:
-        final props = readErrPacket(message);
-        _logger.debug(props);
+        final err = ErrPacket.from(message, _session);
+        _logger.debug(err);
         _logger.debug("authentication was failed");
 
         _setHandshakeState(HandshakeState.completed);
         _logger.info("handshaking was failed");
 
-        throw MysqlHandshakeException(props["errorCode"], props["message"]);
+        err.throwIfError((error) =>
+            MysqlHandshakeException(error.errorCode, error.errorMessage));
 
       case 0xFE:
         await handleAuthSwitchRequest(message);
@@ -120,8 +126,8 @@ class Handshaker {
   Future<void> handleAuthSwitchResult(List<int> message) async {
     switch (message[4]) {
       case 0x00:
-        final props = readOkPacket(message);
-        _logger.debug(props);
+        final ok = OkPacket.from(message, _session);
+        _logger.debug(ok);
         _logger.debug("authentication was successful");
 
         _setHandshakeState(HandshakeState.completed);
@@ -130,14 +136,15 @@ class Handshaker {
         return;
 
       case 0xFF:
-        final props = readErrPacket(message);
-        _logger.debug(props);
+        final err = ErrPacket.from(message, _session);
+        _logger.debug(err);
         _logger.debug("authentication was failed");
 
         _setHandshakeState(HandshakeState.completed);
         _logger.info("handshaking was failed");
 
-        throw MysqlHandshakeException(props["errorCode"], props["message"]);
+        err.throwIfError((error) =>
+            MysqlHandshakeException(error.errorCode, error.errorMessage));
     }
   }
 

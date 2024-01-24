@@ -1,7 +1,9 @@
 import 'package:mysql_connector/src/commands/debug.dart';
 import 'package:mysql_connector/src/commands/ping.dart';
+import 'package:mysql_connector/src/commands/quit.dart';
 import 'package:mysql_connector/src/commands/set_option.dart';
 import 'package:mysql_connector/src/commands/shutdown.dart';
+import 'package:mysql_connector/src/commands/statement.dart';
 import 'package:mysql_connector/src/commands/statistics.dart';
 import 'package:test/test.dart';
 
@@ -27,7 +29,15 @@ void main() {
     test("should be successful", () async {
       final conn = await connect();
 
-      await Ping(conn.commandContext).execute(PingParams());
+      await Ping(conn.commandContext).execute(());
+    });
+  });
+
+  group("COM_QUIT", () {
+    test("should be successful", () async {
+      final conn = await connect();
+
+      await Quit(conn.commandContext).execute(());
     });
   });
 
@@ -51,7 +61,7 @@ void main() {
     test("should be successful", () async {
       final conn = await connect();
 
-      print(await Statistics(conn.commandContext).execute(StatisticsParams()));
+      print(await Statistics(conn.commandContext).execute(()));
     });
   });
 
@@ -60,7 +70,7 @@ void main() {
       final conn = await connect();
 
       await SetOption(conn.commandContext)
-          .execute(SetOptionParams(enableMultiStmts: true));
+          .execute((enableMultiStatements: true));
     });
   });
 
@@ -68,7 +78,7 @@ void main() {
     test("should be successful", () async {
       final conn = await connect();
 
-      await Shutdown(conn.commandContext).execute(ShutdownParams());
+      await Shutdown(conn.commandContext).execute(());
     });
   });
 
@@ -76,16 +86,58 @@ void main() {
     test("should be successful", () async {
       final conn = await connect();
 
-      await Debug(conn.commandContext).execute(DebugParams());
+      await Debug(conn.commandContext).execute(());
     });
   });
 
   group("COM_STMT_PREPARE", () {
-    test("should be successful", () {});
+    test("should be successful", () async {
+      final conn = await connect();
+
+      final result = await PrepareStmt(conn.commandContext)
+          .execute((sqlStatement: "SELECT * FROM users"));
+      print(result.props);
+    });
   });
 
   group("COM_STMT_CLOSE", () {
-    test("should be successful", () {});
+    test("should be successful", () async {
+      final conn = await connect();
+
+      final stmt = await PrepareStmt(conn.commandContext)
+          .execute((sqlStatement: "SELECT * FROM users"));
+      await CloseStmt(conn.commandContext)
+          .execute((statementId: stmt.statementId));
+    });
+  });
+
+  group("COM_STMT_RESET", () {
+    test("should be successful", () async {
+      final conn = await connect();
+
+      final stmt = await PrepareStmt(conn.commandContext)
+          .execute((sqlStatement: "SELECT * FROM users"));
+      await ResetStmt(conn.commandContext)
+          .execute((statementId: stmt.statementId));
+    });
+  });
+
+  group("COM_STMT_EXECUTE", () {
+    test("should be successful", () async {
+      final conn = await connect();
+
+      final stmt = await PrepareStmt(conn.commandContext)
+          .execute((sqlStatement: "SELECT * FROM users"));
+      await ExecuteStmt(conn.commandContext).execute((
+        statementId: stmt.statementId,
+        flag: 0,
+        hasParameters: false,
+        nullBitmap: null,
+        sendType: null,
+        types: null,
+        values: null,
+      ));
+    });
   });
 
   // test("COM_STMT_PREPARE", () async {

@@ -1,8 +1,6 @@
 import '../command.dart';
 
-class ShutdownParams {
-  const ShutdownParams();
-}
+typedef ShutdownParams = ();
 
 final class Shutdown extends CommandBase<ShutdownParams, void> {
   Shutdown(CommandContext context) : super(context);

@@ -2,13 +2,7 @@ import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/command.dart';
 import 'package:mysql_connector/src/packet.dart';
 
-class ProcessKillParams {
-  final int processId;
-
-  const ProcessKillParams({
-    required this.processId,
-  });
-}
+typedef ProcessKillParams = ({int processId});
 
 final class SetOption extends CommandBase<ProcessKillParams, void> {
   SetOption(CommandContext context) : super(context);
@@ -29,7 +23,7 @@ final class SetOption extends CommandBase<ProcessKillParams, void> {
           return;
 
         case 0xFF:
-          final err = ErrPacket(readErrPacket(packet));
+          final err = ErrPacket.from(packet, session);
           throw MysqlExecutionException(
             err.errorCode,
             err.errorMessage,
