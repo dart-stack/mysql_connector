@@ -1,13 +1,12 @@
 name: mysql_connector
 description: MySQL Connector for Dart
-version: 0.0.0
+version: "0.0.0+1"
 repository: https://github.com/dart-stack/mysql_connector
 
 environment:
   sdk: ^3.0.0
 
 dependencies:
-  benchmark: ^0.3.0
   collection: ^1.18.0
   crypto: ^3.0.3
   rxdart: ^0.27.7
@@ -15,3 +14,4 @@ dependencies:
 dev_dependencies:
   lints: ^2.1.0
   test: ^1.24.0
+  benchmark: ^0.3.0
