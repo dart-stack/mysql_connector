@@ -1,0 +1,329 @@
+import 'dart:collection';
+import 'dart:convert';
+import 'dart:typed_data';
+
+const standardPacketHeaderLength = 4;
+const compressedPacketHeaderLength = 7;
+
+const standardPacketSequenceOffset = 3;
+const compressedPacketSequenceOffset = 3;
+
+class Cursor {
+  int _position;
+
+  Cursor._internal(this._position);
+
+  factory Cursor.zero() => Cursor._internal(0);
+
+  factory Cursor.from(int position) => Cursor._internal(position);
+
+  int get position => _position;
+
+  void reset() {
+    _position = 0;
+  }
+
+  Cursor clone() {
+    return Cursor.from(position);
+  }
+
+  void setPosition(int position) {
+    _position = position;
+  }
+
+  void increase(int delta) {
+    _position = _position + delta;
+  }
+
+  int increaseAndGet(int delta) {
+    increase(delta);
+    return position;
+  }
+
+  int getAndIncrease(int delta) {
+    final p = position;
+    increase(delta);
+    return p;
+  }
+}
+
+List<int> readBytes(List<int> buffer, Cursor cursor, int length) {
+  assert(cursor.position + length <= buffer.length);
+
+  final result = <int>[];
+  result.addAll(buffer.getRange(cursor.position, cursor.position + length));
+  cursor.increase(length);
+
+  return result;
+}
+
+int readInteger(List<int> buffer, Cursor cursor, int length) {
+  assert(const [1, 2, 3, 4, 8].contains(length));
+
+  final bytes = readBytes(buffer, cursor, length);
+
+  var result = 0;
+  for (var i = 0; i < bytes.length; i++) {
+    result = result + ((bytes[i] & 0xff) << (8 * i));
+  }
+
+  return result;
+}
+
+int? readLengthEncodedInteger(List<int> buffer, Cursor cursor) {
+  final leadingByte = buffer[cursor.position];
+  cursor.increase(1);
+
+  if (leadingByte < 0xFB) {
+    return leadingByte;
+  } else if (leadingByte == 0xFB) {
+    return null;
+  } else if (leadingByte == 0xFC) {
+    return readInteger(buffer, cursor, 2);
+  } else if (leadingByte == 0xFD) {
+    return readInteger(buffer, cursor, 3);
+  } else if (leadingByte == 0xFE) {
+    return readInteger(buffer, cursor, 8);
+  } else {
+    throw UnimplementedError(
+        "unrecognized leading byte $leadingByte when reading length-encoded integer");
+  }
+}
+
+String readString(
+  List<int> buffer,
+  Cursor cursor,
+  int length, [
+  Encoding encoding = utf8,
+]) {
+  return encoding.decode(readBytes(buffer, cursor, length));
+}
+
+String? readLengthEncodedString(
+  List<int> buffer,
+  Cursor cursor, [
+  Encoding encoding = utf8,
+]) {
+  final length = readLengthEncodedInteger(buffer, cursor);
+  if (length == null) {
+    return null;
+  }
+  return readString(buffer, cursor, length, encoding);
+}
+
+String readZeroTerminatedString(
+  List<int> buffer,
+  Cursor cursor, [
+  Encoding encoding = utf8,
+]) {
+  final bytes = <int>[];
+
+  for (int offset = 0;; offset++) {
+    final curr = buffer[cursor.position + offset];
+    if (curr == 0x00) {
+      cursor.increase(offset + 1); // note: cursor should stop at after '\0'
+      return encoding.decode(bytes);
+    }
+
+    bytes.add(curr);
+  }
+}
+
+// build a bitmap to indicate null where true is.
+List<int> buildNullBitmap(List<bool> bitmap) {
+  // invariant: bytes length = floor((bits + 7) / 8)
+
+  final result = <int>[0x00];
+
+  var i = 0;
+  for (int j = 0;; j++) {
+    for (int k = 0; k < 8; k++) {
+      if (i == bitmap.length) {
+        return result;
+      }
+      if (bitmap[i] == true) {
+        result[j] |= 1 << k;
+      }
+      ++i;
+    }
+    result.add(0x00);
+  }
+}
+
+int getPacketPayloadLength(List<int> buffer, Cursor cursor) {
+  return readInteger(buffer, cursor.clone(), 3);
+}
+
+bool _sufficientToReadPacketAtInternal(
+  List<int> buffer,
+  Cursor cursor,
+  int headerLength,
+) {
+  if (buffer.isEmpty || cursor.position == buffer.length) {
+    return false;
+  }
+
+  final sufficientToReadHeader =
+      buffer.length - cursor.position >= headerLength;
+  if (!sufficientToReadHeader) {
+    return false;
+  }
+
+  final sufficientToReadPayload =
+      buffer.length - cursor.position - headerLength >=
+          getPacketPayloadLength(buffer, cursor);
+  if (!sufficientToReadPayload) {
+    return false;
+  }
+
+  return true;
+}
+
+abstract base class _PacketIteratorBase<T> implements Iterator<T> {
+  final List<int> _buffer;
+
+  final Cursor _cursor;
+  final Cursor _current;
+
+  final int _headerLength;
+
+  _PacketIteratorBase(
+    List<int> buffer,
+    Cursor cursor,
+    int headerLength,
+  )   : _buffer = buffer,
+        _cursor = cursor,
+        _current = cursor.clone(),
+        _headerLength = headerLength;
+
+  List<int> get buffer => _buffer;
+
+  Cursor get cursor => _cursor;
+
+  bool _sufficientToReadPacketAt(Cursor cursor) {
+    return _sufficientToReadPacketAtInternal(_buffer, cursor, _headerLength);
+  }
+
+  int get size {
+    assert(_sufficientToReadPacketAt(_current));
+    return getPacketPayloadLength(_buffer, _current) + _headerLength;
+  }
+
+  (int, int) get range => (_current.position, _current.position + size);
+
+  @override
+  bool moveNext() {
+    if (!_sufficientToReadPacketAt(_cursor)) {
+      return false;
+    }
+    _current.setPosition(_cursor.position);
+    _cursor.increase(size);
+    return true;
+  }
+}
+
+final class _PacketRangeIterator extends _PacketIteratorBase<(int, int)>
+    implements Iterator<(int, int)> {
+  _PacketRangeIterator(
+    List<int> buffer,
+    Cursor cursor,
+    int headerLength,
+  ) : super(buffer, cursor, headerLength);
+
+  @override
+  (int, int) get current => range;
+}
+
+final class _PacketIterator extends _PacketIteratorBase<List<int>>
+    implements Iterator<List<int>> {
+  _PacketIterator(
+    List<int> buffer,
+    Cursor cursor,
+    int headerLength,
+  ) : super(buffer, cursor, headerLength);
+
+  @override
+  List<int> get current {
+    if (buffer is Uint8List) {
+      return Uint8List.sublistView(buffer as Uint8List, range.$1, range.$2);
+    } else {
+      return buffer.getRange(range.$1, range.$2).toList();
+    }
+  }
+}
+
+class StandardPacketRangeIterable
+    with IterableMixin<(int, int)>
+    implements Iterable<(int, int)> {
+  final List<int> _buffer;
+
+  final Cursor _cursor;
+
+  StandardPacketRangeIterable(List<int> buffer, [Cursor? cursor])
+      : _buffer = buffer,
+        _cursor = cursor ?? Cursor.zero();
+
+  @override
+  Iterator<(int, int)> get iterator =>
+      _PacketRangeIterator(_buffer, _cursor, standardPacketHeaderLength);
+}
+
+class CompressedPacketRangeIterable
+    with IterableMixin<(int, int)>
+    implements Iterable<(int, int)> {
+  final List<int> _buffer;
+
+  final Cursor _cursor;
+
+  CompressedPacketRangeIterable(List<int> buffer, [Cursor? cursor])
+      : _buffer = buffer,
+        _cursor = cursor ?? Cursor.zero();
+
+  @override
+  Iterator<(int, int)> get iterator =>
+      _PacketRangeIterator(_buffer, _cursor, compressedPacketHeaderLength);
+}
+
+class StandardPacketIterable
+    with IterableMixin<List<int>>
+    implements Iterable<List<int>> {
+  final List<int> _buffer;
+
+  final Cursor _cursor;
+
+  StandardPacketIterable(List<int> buffer, [Cursor? cursor])
+      : _buffer = buffer,
+        _cursor = cursor ?? Cursor.zero();
+
+  @override
+  Iterator<List<int>> get iterator =>
+      _PacketIterator(_buffer, _cursor, standardPacketHeaderLength);
+}
+
+class CompressedPacketIterable
+    with IterableMixin<List<int>>
+    implements Iterable<List<int>> {
+  final List<int> _buffer;
+
+  final Cursor _cursor;
+
+  CompressedPacketIterable(List<int> buffer, [Cursor? cursor])
+      : _buffer = buffer,
+        _cursor = cursor ?? Cursor.zero();
+
+  @override
+  Iterator<List<int>> get iterator =>
+      _PacketIterator(_buffer, _cursor, compressedPacketHeaderLength);
+}
+
+int countStandardPackets(List<int> buffer) {
+  return StandardPacketIterable(buffer).length;
+}
+
+int countCompressedPackets(List<int> buffer) {
+  return CompressedPacketIterable(buffer).length;
+}
+
+String formatSize(int size) {
+  return "$size";
+}
