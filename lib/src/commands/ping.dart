@@ -15,7 +15,7 @@ final class Ping extends CommandBase<PingParams, void> {
       createPacket()..addByte(0x0e),
     ]);
 
-    await buffer.readPacket();
+    print(await socketReader.packetReader.readInteger(1));
 
     release();
   }

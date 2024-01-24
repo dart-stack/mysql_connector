@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -10,21 +11,21 @@ import 'lock.dart';
 import 'session.dart';
 import 'utils.dart';
 
-abstract interface class PacketBuffer {
+abstract interface class PacketSocketReader {
   List<int> get buffer;
 
   Cursor get cursor;
 
-  Future<void> loadPacket();
+  AsyncPacketReader get packetReader;
+
+  Future<Uint8List> read(int length);
 
   Future<List<int>> readPacket();
-
-  Future<List<int>> peekPacket();
 
   void gc();
 }
 
-class PacketSocket implements PacketBuffer {
+class PacketSocket implements PacketSocketReader {
   final Logger _logger;
 
   final PacketCompressor _packetCompressor;
@@ -83,15 +84,18 @@ class PacketSocket implements PacketBuffer {
     );
   }
 
+  int get maxPacketSize => _session.maxPacketSize;
+
+  bool get compressionEnabled => _session.compressionEnabled;
+
   @override
-  List<int> get buffer => _packetReceiver.buffer;
+  List<int> get buffer => _packetReceiver.packetBuffer;
 
   @override
   Cursor get cursor => _cursor;
 
-  int get maxPacketSize => _session.maxPacketSize;
-
-  bool get compressionEnabled => _session.compressionEnabled;
+  @override
+  AsyncPacketReader get packetReader => _AsyncPacketReader(this);
 
   void _onData(List<int> data) {
     _packetReceiver.onData(data);
@@ -109,14 +113,14 @@ class PacketSocket implements PacketBuffer {
   }
 
   bool _availableToReadNextPacket() {
-    if (buffer.length - _cursor.position < 3) {
+    if (buffer.length - _cursor.position < standardPacketHeaderLength) {
       return false;
     }
-    final len = getPacketPayloadLength(buffer, _cursor);
-    return buffer.length - _cursor.position - standardPacketHeaderLength >= len;
+    return buffer.length - _cursor.position >=
+        standardPacketHeaderLength + getPacketPayloadLength(buffer, _cursor);
   }
 
-  Future<void> _receivePacket() async {
+  Future<void> _receivePacketIfNeeded() async {
     if (_availableToReadNextPacket()) {
       return;
     }
@@ -135,34 +139,60 @@ class PacketSocket implements PacketBuffer {
     await completer.future;
   }
 
-  List<int> _readPacketFromBuffer(bool moveCursor) {
-    final len = readInteger(buffer, _cursor.clone(), 3);
-    final start = _cursor.position;
-    final end = _cursor.position + len + 4;
+  List<int> _readPacketFromBuffer(Cursor cursor) {
+    assert(_availableToReadNextPacket());
 
-    final packet = buffer.getRange(start, end).toList();
-    if (moveCursor) {
-      _cursor.increase(len + 4);
-    }
+    final payloadLength = getPacketPayloadLength(buffer, cursor);
 
+    final start = cursor.position;
+    final end = cursor.position + standardPacketHeaderLength + payloadLength;
+    final packet = getRangeEfficiently(buffer, start, end);
+
+    cursor.increase(standardPacketHeaderLength + payloadLength);
     return packet;
   }
 
   @override
-  Future<void> loadPacket() async {
-    await _receivePacket();
-  }
-
-  @override
   Future<List<int>> readPacket() async {
-    await _receivePacket();
-    return _readPacketFromBuffer(true);
+    await _receivePacketIfNeeded();
+    return _readPacketFromBuffer(_cursor);
   }
 
+  List<int> _read = [];
+
+  int _offset = 0;
+
   @override
-  Future<List<int>> peekPacket() async {
-    await _receivePacket();
-    return _readPacketFromBuffer(false);
+  Future<Uint8List> read(int length) async {
+    assert(length > 0);
+
+    final writer = BytesBuilder();
+    int remaining = length;
+    for (;;) {
+      if (remaining == 0) {
+        return writer.takeBytes();
+      }
+
+      // Note: sometimes may receive empty packet, which not contains
+      //  any payload. if it is currently read, skip it and read next
+      //  packet until non-empty packet is appeared.
+      for (;;) {
+        assert(_offset <= _read.length);
+        if (_offset < _read.length) {
+          break;
+        }
+        await _receivePacketIfNeeded();
+        _read = _readPacketFromBuffer(_cursor);
+        _offset += standardPacketHeaderLength;
+      }
+
+      final available = _read.length - _offset;
+      final bytesToRead = available < remaining ? available : remaining;
+
+      writer.add(getRangeEfficiently(_read, _offset, _offset + bytesToRead));
+      remaining -= bytesToRead;
+      _offset += bytesToRead;
+    }
   }
 
   void sendPacket(List<int> buffer) {
@@ -227,21 +257,21 @@ class _PacketReceiver {
 
   final List<bool Function()> _onPacketReceivedCallbacks = [];
 
-  List<int> _unread = <int>[];
+  final List<int> _unreadBuffer = <int>[];
 
-  int _offset = 0;
+  int _unreadOffset = 0;
 
-  final BytesBuilder _bufferBuilder = BytesBuilder(copy: false);
+  final BytesBuilder _packetBufferWriter = BytesBuilder(copy: false);
 
-  Uint8List _buffer = Uint8List(0);
+  Uint8List _packetBuffer = Uint8List(0);
 
   _ReadState _readState = _ReadState.readHeader;
 
-  Uint8List _header = Uint8List(0);
+  final BytesBuilder _bufferedPacketWriter = BytesBuilder();
+
+  int _bufferedHeaderLength = 0;
 
   int _payloadLength = 0;
-
-  final BytesBuilder _payloadChunks = BytesBuilder();
 
   _PacketReceiver(
     this._logger,
@@ -254,26 +284,46 @@ class _PacketReceiver {
 
   bool get compressionEnabled => _session.compressionEnabled;
 
-  List<int> get buffer => _buffer;
+  Uint8List get packetBuffer => _packetBuffer;
 
-  void release() {
-    _logger.debug(
-        "buffered packets will be released (size=${formatSize(_buffer.length)})");
-    _bufferBuilder.clear();
-    _buffer = Uint8List(0);
+  void _releasePacketBuffer() {
+    _logger.verbose(
+        "buffered packets will be released (size=${formatSize(_packetBuffer.length)})");
+    _packetBufferWriter.clear();
+    _packetBuffer = Uint8List(0);
   }
 
-  void _writeToBuffer(List<int> data) {
-    _bufferBuilder.add(data);
-    _buffer = _bufferBuilder.toBytes();
+  void _releaseUnreadBufferIfNeeded() {
+    if (_unreadOffset > _maxBufferSize) {
+      _logger.verbose(
+          "unread buffer will be released (bufferSize=${formatSize(_maxBufferSize)}, unread=${formatSize(_unreadBuffer.length)})");
+      _unreadBuffer.removeRange(0, _unreadOffset);
+      _unreadOffset = 0;
+    }
+  }
+
+  void release() {
+    _releasePacketBuffer();
+  }
+
+  void _writeToUnreadBuffer(List<int> buffer) {
+    _unreadBuffer.addAll(buffer);
+  }
+
+  void _writeToPacketBuffer(List<int> data) {
+    _packetBufferWriter.add(data);
+    _packetBuffer = _packetBufferWriter.toBytes();
 
     if (_statCollector.enabled) {
       _statCollector.increaseBufferedPackets(countStandardPackets(data));
     }
   }
 
-  void onData(List<int> data) {
-    _unread.addAll(data);
+  void onData(List<int> data) async {
+    _writeToUnreadBuffer(data);
+    _logger.verbose(
+        "${data.length} bytes has been received and written to unread buffer (bufferSize=${_unreadBuffer.length}, written=${data.length})");
+
     processUnread();
   }
 
@@ -285,54 +335,58 @@ class _PacketReceiver {
     _sequenceManager.trackCompressedPacketSequence(buffer);
   }
 
-  int get _available => _unread.length - _offset;
-
   int _getPayloadLength(List<int> header) {
     return (header[0] & 0xff) +
         ((header[1] & 0xff) << 8) +
         ((header[2] & 0xff) << 16);
   }
 
+  int get _available => _unreadBuffer.length - _unreadOffset;
+
+  int get _payloadRemaining =>
+      _payloadLength - _bufferedPacketWriter.length + _bufferedHeaderLength;
+
+  bool get _payloadHasFullReceived =>
+      _bufferedPacketWriter.length - _bufferedHeaderLength == _payloadLength;
+
   void processUnread() async {
     await _lock.acquire();
 
     for (; _available > 0;) {
-      if (_offset > _maxBufferSize) {
-        _logger.debug(
-            "unread buffer will be released (bufferSize=${formatSize(_maxBufferSize)}, unread=${formatSize(_unread.length)}, released=${formatSize(_offset)})");
-        _unread = _unread.getRange(_offset, _unread.length).toList();
-        _offset = 0;
-      }
+      _releaseUnreadBufferIfNeeded();
       if (compressionEnabled) {
         switch (_readState) {
           case _ReadState.readHeader:
             if (_available >= compressedPacketHeaderLength) {
-              _header = Uint8List.fromList(_unread
-                  .getRange(_offset, _offset + compressedPacketHeaderLength)
-                  .toList());
-              _payloadLength = _getPayloadLength(_header);
+              final bufferedHeader = _unreadBuffer
+                  .sublist(
+                    _unreadOffset,
+                    _unreadOffset + compressedPacketHeaderLength,
+                  )
+                  .toUint8List();
+              _bufferedHeaderLength = compressedPacketHeaderLength;
+              _payloadLength = _getPayloadLength(bufferedHeader);
+              _bufferedPacketWriter.add(bufferedHeader);
 
-              _offset += compressedPacketHeaderLength;
+              _unreadOffset += compressedPacketHeaderLength;
               _readState = _ReadState.readPayload;
             }
 
           case _ReadState.readPayload:
-            final remaining = _payloadLength - _payloadChunks.length;
             final available = _available;
-            final read = available > remaining ? remaining : available;
-            _payloadChunks
-                .add(_unread.getRange(_offset, _offset + read).toList());
-            _offset += read;
+            final remaining = _payloadRemaining;
+            final bytesToRead = available < remaining ? available : remaining;
+            _bufferedPacketWriter.add(_unreadBuffer.sublist(
+              _unreadOffset,
+              _unreadOffset + bytesToRead,
+            ));
+            _unreadOffset += bytesToRead;
 
-            if (_payloadChunks.length == _payloadLength) {
-              final bytesBuilder = BytesBuilder(copy: false)
-                ..add(_header)
-                ..add(_payloadChunks.takeBytes());
-              final buffer = bytesBuilder.takeBytes();
-
+            if (_payloadHasFullReceived) {
+              final buffer = _bufferedPacketWriter.takeBytes();
               _trackCompressedPacketSequence(buffer);
               final decompressed = _packetCompressor.decompress(buffer);
-              _writeToBuffer(decompressed);
+              _writeToPacketBuffer(decompressed);
               _trackStandardPacketSequence(decompressed);
               if (_statCollector.enabled) {
                 _statCollector.increaseReceivedPackets();
@@ -346,30 +400,33 @@ class _PacketReceiver {
         switch (_readState) {
           case _ReadState.readHeader:
             if (_available >= standardPacketHeaderLength) {
-              _header = Uint8List.fromList(_unread
-                  .getRange(_offset, _offset + standardPacketHeaderLength)
-                  .toList());
-              _payloadLength = _getPayloadLength(_header);
+              final bufferedHeader = _unreadBuffer
+                  .sublist(
+                    _unreadOffset,
+                    _unreadOffset + standardPacketHeaderLength,
+                  )
+                  .toUint8List();
+              _bufferedHeaderLength = standardPacketHeaderLength;
+              _payloadLength = _getPayloadLength(bufferedHeader);
+              _bufferedPacketWriter.add(bufferedHeader);
 
-              _offset += standardPacketHeaderLength;
+              _unreadOffset += standardPacketHeaderLength;
               _readState = _ReadState.readPayload;
             }
 
           case _ReadState.readPayload:
-            final remaining = _payloadLength - _payloadChunks.length;
             final available = _available;
-            final read = available > remaining ? remaining : available;
-            _payloadChunks
-                .add(_unread.getRange(_offset, _offset + read).toList());
-            _offset += read;
+            final remaining = _payloadRemaining;
+            final bytesToRead = available > remaining ? remaining : available;
+            _bufferedPacketWriter.add(_unreadBuffer.sublist(
+              _unreadOffset,
+              _unreadOffset + bytesToRead,
+            ));
+            _unreadOffset += bytesToRead;
 
-            if (_payloadChunks.length == _payloadLength) {
-              final bytesBuilder = BytesBuilder(copy: false)
-                ..add(_header)
-                ..add(_payloadChunks.takeBytes());
-              final buffer = bytesBuilder.takeBytes();
-
-              _writeToBuffer(buffer);
+            if (_payloadHasFullReceived) {
+              final buffer = _bufferedPacketWriter.takeBytes();
+              _writeToPacketBuffer(buffer);
               _trackStandardPacketSequence(buffer);
               if (_statCollector.enabled) {
                 _statCollector.increaseReceivedPackets();
@@ -426,3 +483,112 @@ class _StatCollector {
     return "receivedPackets = $receivedPackets, bufferedPackets = $bufferedPackets";
   }
 }
+
+abstract interface class AsyncPacketReader {
+  Future<List<int>> readBytes(int length);
+
+  Future<int> readInteger(int length);
+
+  Future<int?> readLengthEncodedInteger();
+
+  Future<String> readString(int length, [Encoding encoding = utf8]);
+
+  Future<String?> readLengthEncodedString([Encoding encoding = utf8]);
+
+  Future<String> readZeroTerminatedString([Encoding encoding = utf8]);
+}
+
+class _AsyncPacketReader implements AsyncPacketReader {
+  final PacketSocket _socket;
+
+  _AsyncPacketReader(this._socket);
+
+  @override
+  Future<List<int>> readBytes(int length) async {
+    return _socket.read(length);
+  }
+
+  @override
+  Future<int> readInteger(int length) async {
+    assert(const [1, 2, 3, 4, 8].contains(length));
+
+    final bytes = await _socket.read(length);
+    var result = 0;
+    for (int i = 0; i < length; i++) {
+      result |= (bytes[i] & 0xff) << (i * 8);
+    }
+    return result;
+  }
+
+  @override
+  Future<int?> readLengthEncodedInteger() async {
+    final leadingByte = (await _socket.read(1))[0];
+    if (leadingByte == 0xFB) {
+      return null;
+    }
+    if (leadingByte < 0xFB) {
+      return leadingByte;
+    }
+    switch (leadingByte) {
+      case == 0xFB:
+        return null;
+
+      case < 0xFB:
+        return leadingByte;
+
+      case == 0xFC:
+        final bytes = await _socket.read(2);
+        return ((bytes[0] & 0xff) << 0) | ((bytes[1] & 0xff) << 8);
+
+      case == 0xFD:
+        final bytes = await _socket.read(3);
+        return ((bytes[0] & 0xff) << 0) |
+            ((bytes[1] & 0xff) << 8) |
+            ((bytes[2] & 0xff) << 16);
+
+      case == 0xFE:
+        final bytes = await _socket.read(3);
+        return ((bytes[0] & 0xff) << 0) |
+            ((bytes[1] & 0xff) << 8) |
+            ((bytes[2] & 0xff) << 16) |
+            ((bytes[3] & 0xff) << 24) |
+            ((bytes[4] & 0xff) << 32) |
+            ((bytes[5] & 0xff) << 40) |
+            ((bytes[6] & 0xff) << 48) |
+            ((bytes[7] & 0xff) << 56);
+
+      default:
+        throw StateError(
+            "malformed length-encoded integer with leading byte $leadingByte");
+    }
+  }
+
+  @override
+  Future<String> readString(int length, [Encoding encoding = utf8]) async {
+    return encoding.decode(await _socket.read(length));
+  }
+
+  @override
+  Future<String?> readLengthEncodedString([Encoding encoding = utf8]) async {
+    final length = await readLengthEncodedInteger();
+    if (length == null) {
+      return null;
+    }
+    return readString(length, encoding);
+  }
+
+  @override
+  Future<String> readZeroTerminatedString([Encoding encoding = utf8]) async {
+    final bytes = <int>[];
+    for (;;) {
+      final byte = (await _socket.read(1))[0];
+      if (byte == 0x00) {
+        return encoding.decode(bytes);
+      }
+      bytes.add(byte);
+    }
+  }
+}
+
+// TODO(archartist): Implement fixed-size buffer to optimize the performance 
+//  of socket receiving and packet buffering.

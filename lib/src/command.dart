@@ -8,7 +8,7 @@ abstract interface class CommandContext {
 
   SessionContext get session;
 
-  PacketBuffer get buffer;
+  PacketSocketReader get socketReader;
 
   PacketBuilder createPacket();
 
@@ -28,7 +28,9 @@ abstract base class CommandBase<P, T> {
 
   SessionContext get session => _context.session;
 
-  PacketBuffer get buffer => _context.buffer;
+  PacketSocketReader get socketReader => _context.socketReader;
+
+  AsyncPacketReader get packetReader => socketReader.packetReader;
 
   Future<void> acquire() async {
     await _context.beginCommand();

@@ -31,7 +31,7 @@ final class Query extends CommandBase<QueryParams, dynamic> {
   }
 
   Future handleResponse() async {
-    var packet = await buffer.readPacket();
+    var packet = await socketReader.readPacket();
     switch (packet[4]) {
       case 0x00:
         final props = readOkPacket(packet);
@@ -69,7 +69,7 @@ final class Query extends CommandBase<QueryParams, dynamic> {
           createPacket(),
         ]);
 
-        packet = await buffer.readPacket();
+        packet = await socketReader.readPacket();
         switch (packet[4]) {
           case 0x00:
             final props = readOkPacket(packet);
@@ -87,8 +87,9 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         }
 
       default:
-        buffer.cursor.increase(-packet.length);
-        final result = await readResultSet(buffer, session);
+        socketReader.cursor.increase(-packet.length);
+        final result = await readResultSet(socketReader, session, false);
+        print("result set was fetched ${result.rows.length} rows");
 
         release();
         return result;

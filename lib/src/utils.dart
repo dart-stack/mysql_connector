@@ -8,6 +8,9 @@ const compressedPacketHeaderLength = 7;
 const standardPacketSequenceOffset = 3;
 const compressedPacketSequenceOffset = 3;
 
+const standardPacketPayloadOffset = 4;
+const compressedPacketPayloadOffset = 7;
+
 class Cursor {
   int _position;
 
@@ -51,7 +54,7 @@ List<int> readBytes(List<int> buffer, Cursor cursor, int length) {
   assert(cursor.position + length <= buffer.length);
 
   final result = <int>[];
-  result.addAll(buffer.getRange(cursor.position, cursor.position + length));
+  result.addAll(buffer.sublist(cursor.position, cursor.position + length));
   cursor.increase(length);
 
   return result;
@@ -154,7 +157,23 @@ int getPacketPayloadLength(List<int> buffer, Cursor cursor) {
   return readInteger(buffer, cursor.clone(), 3);
 }
 
-bool _sufficientToReadPacketAtInternal(
+List<int> getRangeEfficiently(List<int> buffer, int start, int end) {
+  if (buffer is Uint8List) {
+    return Uint8List.sublistView(buffer, start, end);
+  }
+  return buffer.sublist(start, end);
+}
+
+extension IntListToUint8ListExtension on List<int> {
+  Uint8List toUint8List() {
+    if (this is Uint8List) {
+      return this as Uint8List;
+    }
+    return Uint8List.fromList(this);
+  }
+}
+
+bool _availableToReadPacketAtInternal(
   List<int> buffer,
   Cursor cursor,
   int headerLength,
@@ -163,8 +182,7 @@ bool _sufficientToReadPacketAtInternal(
     return false;
   }
 
-  final sufficientToReadHeader =
-      buffer.length - cursor.position >= headerLength;
+  final sufficientToReadHeader = buffer.length - cursor.position >= headerLength;
   if (!sufficientToReadHeader) {
     return false;
   }
@@ -200,12 +218,12 @@ abstract base class _PacketIteratorBase<T> implements Iterator<T> {
 
   Cursor get cursor => _cursor;
 
-  bool _sufficientToReadPacketAt(Cursor cursor) {
-    return _sufficientToReadPacketAtInternal(_buffer, cursor, _headerLength);
+  bool _availableToReadPacketAt(Cursor cursor) {
+    return _availableToReadPacketAtInternal(_buffer, cursor, _headerLength);
   }
 
   int get size {
-    assert(_sufficientToReadPacketAt(_current));
+    assert(_availableToReadPacketAt(_current));
     return getPacketPayloadLength(_buffer, _current) + _headerLength;
   }
 
@@ -213,7 +231,7 @@ abstract base class _PacketIteratorBase<T> implements Iterator<T> {
 
   @override
   bool moveNext() {
-    if (!_sufficientToReadPacketAt(_cursor)) {
+    if (!_availableToReadPacketAt(_cursor)) {
       return false;
     }
     _current.setPosition(_cursor.position);
@@ -243,13 +261,7 @@ final class _PacketIterator extends _PacketIteratorBase<List<int>>
   ) : super(buffer, cursor, headerLength);
 
   @override
-  List<int> get current {
-    if (buffer is Uint8List) {
-      return Uint8List.sublistView(buffer as Uint8List, range.$1, range.$2);
-    } else {
-      return buffer.getRange(range.$1, range.$2).toList();
-    }
-  }
+  List<int> get current => getRangeEfficiently(buffer, range.$1, range.$2);
 }
 
 class StandardPacketRangeIterable

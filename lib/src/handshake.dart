@@ -166,24 +166,24 @@ class Handshaker {
     props["statusFlags"] = readInteger(message, cursor, 2);
     props["serverCaps2"] = readInteger(message, cursor, 2);
     props["serverCaps"] = props["serverCaps1"] + (props["serverCaps2"] << 16);
-    if ((props["serverCaps"] & kCapPluginAuth) != 0) {
+    if ((props["serverCaps"] & capPluginAuth) != 0) {
       props["pluginDataLength"] = readInteger(message, cursor, 1);
     } else {
       props["reserved2"] = readInteger(message, cursor, 1);
     }
     props["filter"] = readString(message, cursor, 6);
-    if ((props["serverCaps"] & kCapClientMysql) != 0) {
+    if ((props["serverCaps"] & capClientMysql) != 0) {
       props["filter2"] = readString(message, cursor, 4);
     } else {
       props["serverCaps3"] = readInteger(message, cursor, 4);
       props["serverCaps"] = props["serverCaps"] + (props["serverCaps3"] << 24);
     }
-    if ((props["serverCaps"] & kCapSecureConnection) != 0) {
+    if ((props["serverCaps"] & capSecureConnection) != 0) {
       props["scramble2"] =
           readString(message, cursor, max(12, props["pluginDataLength"] - 9));
       props["reserved3"] = readBytes(message, cursor, 1);
     }
-    if ((props["serverCaps"] & kCapPluginAuth) != 0) {
+    if ((props["serverCaps"] & capPluginAuth) != 0) {
       props["authenticationPluginName"] =
           readZeroTerminatedString(message, cursor);
     }
@@ -203,25 +203,25 @@ class Handshaker {
     builder.add([0x00, 0x00, 0x00, 0x00]);
 
     var clientCaps = 0;
-    clientCaps |= kCapClientProtocol41;
-    clientCaps |= kCapLocalFiles;
+    clientCaps |= capClientProtocol41;
+    clientCaps |= capLocalFiles;
     // _clientCaps |= kCapSecureConnection;
 
-    clientCaps |= kCapPluginAuth;
+    clientCaps |= capPluginAuth;
 
     if (_connectOptions.enableCompression) {
-      clientCaps |= kCapCompress;
+      clientCaps |= capCompress;
     }
 
     if (_connectOptions.database != null) {
-      clientCaps |= kCapConnectWithDB;
+      clientCaps |= capConnectWithDB;
     }
 
     writeInteger(builder, 4, clientCaps & 0xffffffff);
     writeInteger(builder, 4, _connectOptions.maxPacketSize);
     writeInteger(builder, 1, _connectOptions.charset);
     writeBytes(builder, List.filled(19, 0));
-    if ((clientCaps & kCapClientMysql) == 0) {
+    if ((clientCaps & capClientMysql) == 0) {
       writeInteger(builder, 4, (clientCaps >> 32) & 0xffffffff);
     } else {
       writeBytes(builder, List.filled(4, 0));
@@ -232,21 +232,21 @@ class Handshaker {
       _connectOptions.password,
       _scramble,
     );
-    if ((clientCaps & kCapPluginAuthLenencClientData) != 0) {
+    if ((clientCaps & capPluginAuthLenencClientData) != 0) {
       writeLengthEncodedBytes(builder, encodedPassword);
-    } else if ((clientCaps & kCapSecureConnection) != 0) {
+    } else if ((clientCaps & capSecureConnection) != 0) {
       writeInteger(builder, 1, encodedPassword.length);
       writeBytes(builder, encodedPassword);
     } else {
       writeZeroTerminatedBytes(builder, []);
     }
-    if ((clientCaps & kCapConnectWithDB) != 0) {
+    if ((clientCaps & capConnectWithDB) != 0) {
       writeZeroTerminatedString(builder, _connectOptions.database!);
     }
-    if ((clientCaps & kCapPluginAuth) != 0) {
+    if ((clientCaps & capPluginAuth) != 0) {
       writeZeroTerminatedString(builder, _connectOptions.authMethod);
     }
-    if ((clientCaps & kCapConnectAttrs) != 0) {
+    if ((clientCaps & capConnectAttrs) != 0) {
       writeLengthEncodedInteger(builder, 0);
       // for (int i = 0; i < 1; i++) {
       //   writeLengthEncodedString(data, "key");
@@ -268,18 +268,21 @@ class Handshaker {
     final props = <String, dynamic>{};
     final cursor = Cursor.zero();
 
-    final header = readPacketHeader(message, cursor);
+    final payloadLength = readInteger(message, cursor, 3);
+    cursor.increase(1);
 
     if (message[cursor.position] != 0xFE) {
       throw AssertionError(
         "Auth Switch Request must with a leading byte 0xFE, but got ${message[cursor.position].toRadixString(16)}",
       );
     }
-    cursor.increase(1);
-
+    cursor.increase(1); // skip leading byte
     props["authPluginName"] = readZeroTerminatedString(message, cursor);
+    // FIXME: I don't know why there is a '\0' at the end of the packet,
+    //  refers to the protocol documentation, that there should be
+    //  a string<EOF>.
     props["authPluginData"] = readString(message, cursor,
-        header.length - cursor.position + standardPacketHeaderLength - 1);
+        standardPacketHeaderLength + payloadLength - cursor.position - 1);
 
     return props;
   }

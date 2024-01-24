@@ -18,7 +18,7 @@ class PacketCompressor {
     }
 
     final cursor = Cursor.zero();
-    final buffer = BytesBuilder();
+    final bufferWriter = BytesBuilder();
 
     var available = maxPacketSize;
     var payload = <int>[];
@@ -26,18 +26,18 @@ class PacketCompressor {
     void packAndClear() {
       if (payload.isNotEmpty) {
         if (payload.length < threshold) {
-          writeInteger(buffer, 3, payload.length);
-          writeInteger(buffer, 1, sequence++);
-          writeInteger(buffer, 3, 0);
-          writeBytes(buffer, payload);
+          writeInteger(bufferWriter, 3, payload.length);
+          writeInteger(bufferWriter, 1, sequence++);
+          writeInteger(bufferWriter, 3, 0);
+          writeBytes(bufferWriter, payload);
         } else {
           final uncompressedLen = payload.length;
           final compressed = zlib.encode(payload);
 
-          writeInteger(buffer, 3, compressed.length);
-          writeInteger(buffer, 1, sequence++);
-          writeInteger(buffer, 3, uncompressedLen);
-          writeBytes(buffer, compressed);
+          writeInteger(bufferWriter, 3, compressed.length);
+          writeInteger(bufferWriter, 1, sequence++);
+          writeInteger(bufferWriter, 3, uncompressedLen);
+          writeBytes(bufferWriter, compressed);
         }
 
         available = maxPacketSize;
@@ -53,7 +53,7 @@ class PacketCompressor {
           packAndClear();
         }
 
-        return buffer.takeBytes();
+        return bufferWriter.takeBytes();
       }
 
       assert(
@@ -66,53 +66,53 @@ class PacketCompressor {
         packAndClear();
       }
 
-      payload.addAll(readBytes(packets, cursor, len + standardPacketHeaderLength));
+      payload
+          .addAll(readBytes(packets, cursor, len + standardPacketHeaderLength));
       available -= len + standardPacketHeaderLength;
     }
   }
 
   List<int> decompress(
-    List<int> packets, [
+    List<int> buffer, [
     Cursor? cursor,
   ]) {
-    if (packets.isEmpty) {
-      return [];
-    }
     cursor ??= Cursor.zero();
 
-    final buffer = BytesBuilder();
+    final writer = BytesBuilder();
 
     for (;;) {
-      assert(cursor.position <= packets.length, "cursor is out of range");
+      assert(cursor.position <= buffer.length, "cursor is out of range");
 
-      if (cursor.position == packets.length) {
-        return buffer.takeBytes();
+      if (cursor.position == buffer.length) {
+        return writer.takeBytes();
       }
       assert(
-        packets.length >= cursor.position + 7,
+        buffer.length >= cursor.position + 7,
         "invalid compressed packet length",
       );
 
-      final compressedLen = readInteger(packets, cursor, 3);
-      readInteger(packets, cursor, 1);
-      final uncompressedLen = readInteger(packets, cursor, 3);
+      final compressedLength = readInteger(buffer, cursor, 3);
+      readInteger(buffer, cursor, 1);
+      final uncompressedLength = readInteger(buffer, cursor, 3);
 
-      if (uncompressedLen == 0) {
-        buffer.add(readBytes(packets, cursor, compressedLen));
+      final start = cursor.position;
+      final end = start + compressedLength;
+      if (uncompressedLength == 0) {
+        writer.add(getRangeEfficiently(buffer, start, end));
       } else {
         final decompressed =
-            zlib.decode(readBytes(packets, cursor, compressedLen));
+            zlib.decode(getRangeEfficiently(buffer, start, end));
         assert(
-          decompressed.length == uncompressedLen,
+          decompressed.length == uncompressedLength,
           "decompressed payload held an incorrect length",
         );
-        buffer.add(decompressed);
+        writer.add(decompressed);
       }
+
+      cursor.increase(compressedLength);
     }
   }
 }
-
-
 
 class CompressedPacketBufferView {
   final List<int> _buffer;

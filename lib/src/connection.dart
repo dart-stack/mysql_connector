@@ -517,7 +517,7 @@ class _CommandContext implements CommandContext {
   SessionContext get session => connection.sessionContext;
 
   @override
-  PacketBuffer get buffer => connection._socket;
+  PacketSocketReader get socketReader => connection._socket;
 
   @override
   PacketBuilder createPacket() {
