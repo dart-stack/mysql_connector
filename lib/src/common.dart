@@ -32,6 +32,8 @@ const capMariadbClientStmtBulkOperations = 1 << 34;
 const capMariadbClientExtendedTypeInfo = 1 << 35;
 const capMariadbClientCacheMetadata = 1 << 36;
 
+// TODO: These data-types is only for MariaDB, considering supports MySQL
+//  separately.
 // Field types
 const mysqlTypeDecimal = 0;
 const mysqlTypeTiny = 1;
@@ -66,21 +68,21 @@ const mysqlTypeString = 254;
 const mysqlTypeGeometry = 255;
 
 // Field details flag
-const fieldNotNull = 1;
-const fieldPrimaryKey = 2;
-const fieldUniqueKey = 4;
-const fieldMultipleKey = 8;
-const fieldBlob = 16;
-const fieldUnsigned = 32;
-const fieldZeroFill = 64;
-const fieldBinaryCollation = 128;
-const fieldEnum = 256;
-const fieldAutoIncrement = 512;
-const fieldTimestamp = 1024;
-const fieldSet = 2048;
-const fieldNoDefaultValue = 4096;
-const fieldOnUpdateNow = 8192;
-const fieldNum = 32768;
+const fieldFlagNotNull = 1;
+const fieldFlagPrimaryKey = 2;
+const fieldFlagUniqueKey = 4;
+const fieldFlagMultipleKey = 8;
+const fieldFlagBlob = 16;
+const fieldFlagUnsigned = 32;
+const fieldFlagZerofillFlag = 64;
+const fieldFlagBinaryCollation = 128;
+const fieldFlagEnum = 256;
+const fieldFlagAutoIncrement = 512;
+const fieldFlagTimestamp = 1024;
+const fieldFlagSet = 2048;
+const fieldFlagNoDefaultValueFlag = 4096;
+const fieldFlagOnUpdateNowFlag = 8192;
+const fieldFlagNumFlag = 32768;
 
 // Server status flag
 const serverStatusInTrans = 1;
@@ -172,6 +174,6 @@ class MysqlExecutionException implements IOException {
 
   @override
   String toString() {
-    return "${sqlState == null ? "" : "$sqlState "}$message ($code)";
+    return "$code $message${sqlState == null ? "" : " ($sqlState)"}";
   }
 }

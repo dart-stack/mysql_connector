@@ -47,15 +47,15 @@ void writeLengthEncodedInteger(BytesBuilder writer, int? value) {
   }
 }
 
+void writeLengthEncodedBytes(BytesBuilder writer, List<int> value) {
+  writeLengthEncodedInteger(writer, value.length);
+  writeBytes(writer, value);
+}
+
 void writeZeroTerminatedBytes(BytesBuilder writer, List<int> value) {
   writer.add(
       value.expand((byte) => byte == 0x00 ? [0x5c, 0x00] : [byte]).toList());
   writer.addByte(0x00);
-}
-
-void writeLengthEncodedBytes(BytesBuilder writer, List<int> value) {
-  writeLengthEncodedInteger(writer, value.length);
-  writeBytes(writer, value);
 }
 
 void writeString(

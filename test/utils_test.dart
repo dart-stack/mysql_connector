@@ -111,4 +111,29 @@ void main() {
     });
   });
 
+  group("Bitmap", () {
+    test(".build()", () {
+      final bitmap = Bitmap.build([
+        true, false, false, true, false, false, false, true, //
+        true, false, false, false, false, false, false, false, //
+        true, false, false, false, false, false, false, false, //
+      ]);
+
+      expect(bitmap.at(0), isTrue);
+      expect(bitmap.at(3), isTrue);
+      expect(bitmap.at(7), isTrue);
+      expect(bitmap.at(8), isTrue);
+      expect(bitmap.at(16), isTrue);
+    });
+
+    test(".at()", () {
+      final bitmap = Bitmap.from([0x89, 0x01, 0x01]);
+
+      expect(bitmap.at(0), isTrue);
+      expect(bitmap.at(3), isTrue);
+      expect(bitmap.at(7), isTrue);
+      expect(bitmap.at(8), isTrue);
+      expect(bitmap.at(16), isTrue);
+    });
+  });
 }

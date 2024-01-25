@@ -5,6 +5,9 @@ import 'package:mysql_connector/src/commands/set_option.dart';
 import 'package:mysql_connector/src/commands/shutdown.dart';
 import 'package:mysql_connector/src/commands/statement.dart';
 import 'package:mysql_connector/src/commands/statistics.dart';
+import 'package:mysql_connector/src/common.dart';
+import 'package:mysql_connector/src/datatype.dart';
+import 'package:mysql_connector/src/utils.dart';
 import 'package:test/test.dart';
 
 import 'package:mysql_connector/src/connection.dart';
@@ -91,12 +94,24 @@ void main() {
   });
 
   group("COM_STMT_PREPARE", () {
-    test("should be successful", () async {
-      final conn = await connect();
+    group("without placeholder", () {
+      test("should be successful", () async {
+        final conn = await connect();
 
-      final result = await PrepareStmt(conn.commandContext)
-          .execute((sqlStatement: "SELECT * FROM users"));
-      print(result.props);
+        final result = await PrepareStmt(conn.commandContext)
+            .execute((sqlStatement: "SELECT * FROM users"));
+        print(result.props);
+      });
+    });
+
+    group("with placeholders", () {
+      test("should be successful", () async {
+        final conn = await connect();
+
+        final result = await PrepareStmt(conn.commandContext)
+            .execute((sqlStatement: "SELECT * FROM users WHERE id = ?"));
+        print(result.props);
+      });
     });
   });
 
@@ -123,20 +138,43 @@ void main() {
   });
 
   group("COM_STMT_EXECUTE", () {
-    test("should be successful", () async {
-      final conn = await connect();
+    group("without placeholder", () {
+      test("should be successful", () async {
+        final conn = await connect();
 
-      final stmt = await PrepareStmt(conn.commandContext)
-          .execute((sqlStatement: "SELECT * FROM users"));
-      await ExecuteStmt(conn.commandContext).execute((
-        statementId: stmt.statementId,
-        flag: 0,
-        hasParameters: false,
-        nullBitmap: null,
-        sendType: null,
-        types: null,
-        values: null,
-      ));
+        final stmt = await PrepareStmt(conn.commandContext)
+            .execute((sqlStatement: "SELECT * FROM users"));
+        await ExecuteStmt(conn.commandContext).execute((
+          statementId: stmt.statementId,
+          flag: 0,
+          hasParameters: false,
+          nullBitmap: null,
+          sendType: null,
+          types: null,
+          parameters: null,
+        ));
+      });
+    });
+
+    group("with placeholders", () {
+      test("should be successful", () async {
+        final conn = await connect();
+
+        final stmt = await PrepareStmt(conn.commandContext)
+            .execute((sqlStatement: "SELECT * FROM users WHERE id = ?"));
+        final rs = await ExecuteStmt(conn.commandContext).execute((
+          statementId: stmt.statementId,
+          flag: 0,
+          hasParameters: true,
+          nullBitmap: Bitmap.build([false]).buffer,
+          sendType: true,
+          types: [
+            [mysqlTypeLong, 0]
+          ],
+          parameters: [encode(stmt.columns![0], 2)],
+        ));
+        print(rs);
+      });
     });
   });
 

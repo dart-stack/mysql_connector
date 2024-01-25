@@ -61,21 +61,21 @@ class PrepareStmtResult {
           throw Exception("error!");
       }
     }
-    if (props[fieldNumColumns] > 0) {
-      props[fieldColumns] = [];
-      for (int i = 0; i < props[fieldNumColumns]; i++) {
-        props[fieldColumns]
-            .add(await FieldDefinition.fromReader(reader, session));
+    if (props[fieldNumPlaceholders] > 0) {
+      props[fieldPlaceholders] = <ResultSetColumn>[];
+      for (int i = 0; i < props[fieldNumPlaceholders]; i++) {
+        props[fieldPlaceholders]
+            .add(await ResultSetColumn.fromReader(reader, session));
       }
       if (!session.hasCapabilities(capClientDeprecateEof)) {
         await reader.readPacket();
       }
     }
-    if (props[fieldNumPlaceholders] > 0) {
-      props[fieldPlaceholders] = [];
-      for (int i = 0; i < props[fieldNumPlaceholders]; i++) {
-        props[fieldPlaceholders]
-            .add(await FieldDefinition.fromReader(reader, session));
+    if (props[fieldNumColumns] > 0) {
+      props[fieldColumns] = <ResultSetColumn>[];
+      for (int i = 0; i < props[fieldNumColumns]; i++) {
+        props[fieldColumns]
+            .add(await ResultSetColumn.fromReader(reader, session));
       }
       if (!session.hasCapabilities(capClientDeprecateEof)) {
         await reader.readPacket();
@@ -95,9 +95,11 @@ class PrepareStmtResult {
 
   int get numberOfPlaceholders => props[fieldNumPlaceholders];
 
-  List get columns => props[fieldColumns];
+  List<ResultSetColumn>? get columns =>
+      props[fieldColumns] as List<ResultSetColumn>?;
 
-  List get placeholders => props[fieldPlaceholders];
+  List<ResultSetColumn>? get placeholders =>
+      props[fieldPlaceholders] as List<ResultSetColumn>?;
 }
 
 typedef CloseStmtParams = ({int statementId});
@@ -164,15 +166,15 @@ typedef ExecuteStmtParams = ({
   bool hasParameters,
   List<int>? nullBitmap,
   bool? sendType,
-  List<int>? types,
-  List<int>? values,
+  List<List<int>>? types,
+  List<List<int>>? parameters,
 });
 
 final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
   ExecuteStmt(CommandContext context) : super(context);
 
   @override
-  Future<void> execute(ExecuteStmtParams params) async {
+  Future<dynamic> execute(ExecuteStmtParams params) async {
     await acquire();
     try {
       final command = createPacket()
@@ -183,9 +185,20 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
       if (params.hasParameters) {
         command.addBytes(params.nullBitmap ?? []);
         if (params.sendType == true) {
-          command.addBytes(params.types!);
+          command.addByte(1);
+          final writer = BytesBuilder();
+          for (final type in params.types!) {
+            writer.add(type);
+          }
+          command.addBytes(writer.takeBytes());
+        } else {
+          command.addByte(0);
         }
-        command.addBytes(params.values!);
+        final writer = BytesBuilder();
+        for (final param in params.parameters!) {
+          writer.add(param);
+        }
+        command.addBytes(writer.takeBytes());
       }
       sendCommand([command]);
 
@@ -211,7 +224,7 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
               await ResultSet.fromSocket(socketReader, session, true);
           print("${result.rows.length} rows was fetched");
 
-          return;
+          return result;
       }
     } finally {
       release();
@@ -219,7 +232,12 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
   }
 }
 
-typedef FetchStmtParams = ({int statementId, int numberOfRows});
+typedef FetchStmtParams = ({
+  int statementId,
+  int numberOfRows,
+  int numberOfColumns,
+  List<ResultSetColumn> columns,
+});
 
 final class FetchStmt extends CommandBase<FetchStmtParams, void> {
   FetchStmt(CommandContext context) : super(context);
@@ -244,8 +262,12 @@ final class FetchStmt extends CommandBase<FetchStmtParams, void> {
 
           default:
             socketReader.cursor.increase(-buffer.length);
-            // FIXME: temporary assigned value
-            await BinaryResultRow.fromReader(socketReader, session, 2);
+            await ResultSetBinaryRow.fromReader(
+              socketReader,
+              session,
+              params.numberOfColumns,
+              params.columns,
+            );
         }
       }
     } finally {
@@ -257,6 +279,8 @@ final class FetchStmt extends CommandBase<FetchStmtParams, void> {
 typedef SendLongDataStmtParams = ({
   int statementId,
   int parameter,
+  int numberOfColumns,
+  List<ResultSetColumn> columns,
 });
 
 final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
@@ -283,7 +307,12 @@ final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
           default:
             socketReader.cursor.increase(-buffer.length);
             // FIXME: temporary assigned value
-            await BinaryResultRow.fromReader(socketReader, session, 2);
+            await ResultSetBinaryRow.fromReader(
+              socketReader,
+              session,
+              params.numberOfColumns,
+              params.columns,
+            );
         }
       }
     } finally {

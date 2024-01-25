@@ -53,11 +53,22 @@ class Cursor {
 List<int> readBytes(List<int> buffer, Cursor cursor, int length) {
   assert(cursor.position + length <= buffer.length);
 
-  final result = <int>[];
-  result.addAll(buffer.sublist(cursor.position, cursor.position + length));
+  final result = buffer.sublist(cursor.position, cursor.position + length);
   cursor.increase(length);
 
   return result;
+}
+
+List<int>? readLengthEncodedBytes(
+  List<int> buffer,
+  Cursor cursor, [
+  Encoding encoding = utf8,
+]) {
+  final length = readLengthEncodedInteger(buffer, cursor);
+  if (length == null) {
+    return null;
+  }
+  return readBytes(buffer, cursor, length);
 }
 
 int readInteger(List<int> buffer, Cursor cursor, int length) {
@@ -132,24 +143,46 @@ String readZeroTerminatedString(
   }
 }
 
-// build a bitmap to indicate null where true is.
-List<int> buildNullBitmap(List<bool> bitmap) {
-  // invariant: bytes length = floor((bits + 7) / 8)
+class Bitmap {
+  static Bitmap from(List<int> buffer) {
+    return Bitmap._internal(buffer.toUint8List());
+  }
 
-  final result = <int>[0x00];
+  // build a bitmap to indicate null where true is.
+  static Bitmap build(List<bool> selector) {
+    // invariant: bytes length = floor((bits + 7) / 8)
 
-  var i = 0;
-  for (int j = 0;; j++) {
-    for (int k = 0; k < 8; k++) {
-      if (i == bitmap.length) {
-        return result;
+    final buffer = <int>[0x00];
+    var i = 0;
+    for (int j = 0;; j++) {
+      for (int k = 0; k < 8; k++) {
+        if (i == selector.length) {
+          return from(buffer);
+        }
+        if (selector[i] == true) {
+          buffer[j] |= 1 << k;
+        }
+        ++i;
       }
-      if (bitmap[i] == true) {
-        result[j] |= 1 << k;
-      }
-      ++i;
+      buffer.add(0x00);
     }
-    result.add(0x00);
+  }
+
+  final Uint8List _bitmap;
+
+  const Bitmap._internal(this._bitmap);
+
+  List<int> get buffer => UnmodifiableUint8ListView(_bitmap);
+
+  bool at(int offset) {
+    final i = (offset / 8).floor();
+    final j = offset % 8;
+    return (_bitmap[i] & (1 << j)) > 0;
+  }
+
+  @override
+  String toString() {
+    return _bitmap.map((x) => x.toRadixString(2).split('').reversed.join().padRight(8, '0')).join();
   }
 }
 
@@ -182,7 +215,8 @@ bool _availableToReadPacketAtInternal(
     return false;
   }
 
-  final sufficientToReadHeader = buffer.length - cursor.position >= headerLength;
+  final sufficientToReadHeader =
+      buffer.length - cursor.position >= headerLength;
   if (!sufficientToReadHeader) {
     return false;
   }

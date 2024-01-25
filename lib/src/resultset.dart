@@ -1,4 +1,5 @@
 import 'package:mysql_connector/src/common.dart';
+import 'package:mysql_connector/src/datatype.dart';
 
 import 'session.dart';
 import 'socket.dart';
@@ -18,13 +19,13 @@ class ResultSet {
     final props = <String, dynamic>{};
 
     props[fieldNumColumns] = await _readColumnCount(reader, session);
-    props[fieldColumns] = [];
+    props[fieldColumns] = <ResultSetColumn>[];
 
     // TODO: if not (MARIADB_CLIENT_CACHE_METADATA capability set)
     //  OR (send metadata == 1)
     for (int i = 0; i < props[fieldNumColumns]; i++) {
       props[fieldColumns]
-          .add(await FieldDefinition.fromReader(reader, session));
+          .add(await ResultSetColumn.fromReader(reader, session));
     }
     if (!session.hasCapabilities(capClientDeprecateEof)) {
       await reader.readPacket();
@@ -42,13 +43,14 @@ class ResultSet {
         default:
           reader.cursor.increase(-buffer.length);
           if (binary) {
-            props[fieldRows].add(await BinaryResultRow.fromReader(
+            props[fieldRows].add(await ResultSetBinaryRow.fromReader(
               reader,
               session,
               props[fieldNumColumns],
+              props[fieldColumns],
             ));
           } else {
-            props[fieldRows].add(await TextResultRow.fromReader(
+            props[fieldRows].add(await ResultSetTextRow.fromReader(
               reader,
               session,
               props[fieldNumColumns],
@@ -64,9 +66,14 @@ class ResultSet {
 
   int get numberOfColumns => props[fieldNumColumns];
 
-  List<FieldDefinition> get columns => props[fieldColumns];
+  List<ResultSetColumn> get columns => props[fieldColumns];
 
   List get rows => props[fieldRows];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
 }
 
 Future<int> _readColumnCount(
@@ -78,7 +85,7 @@ Future<int> _readColumnCount(
       buffer, Cursor.from(standardPacketPayloadOffset))!;
 }
 
-class FieldDefinition {
+class ResultSetColumn {
   static const fieldCatalog = "catalog";
   static const fieldSchema = "schema";
   static const fieldTableName = "tableName";
@@ -93,10 +100,10 @@ class FieldDefinition {
   static const fieldCharset = "charset";
   static const fieldMaxColumnSize = "maxColumnSize";
   static const fieldFieldType = "fieldType";
-  static const fieldDetailsFlag = "detailsFlag";
+  static const fieldDetailFlag = "detailFlag";
   static const fieldDecimals = "decimals";
 
-  static Future<FieldDefinition> fromReader(
+  static Future<ResultSetColumn> fromReader(
     PacketSocketReader reader,
     SessionContext session,
   ) async {
@@ -113,7 +120,7 @@ class FieldDefinition {
     props[fieldOriginalFieldName] = readLengthEncodedString(buffer, cursor);
     if (session.hasCapabilities(capMariadbClientExtendedTypeInfo)) {
       props[fieldNumExtendedInfo] = readLengthEncodedInteger(buffer, cursor);
-      props[fieldExtendedInfo] = [];
+      props[fieldExtendedInfo] = <Map<String, dynamic>>[];
       for (int i = 0; i < props[fieldNumExtendedInfo]; i++) {
         props[fieldExtendedInfo].add({
           fieldExtendedInfoType: readInteger(buffer, cursor, 1),
@@ -125,15 +132,15 @@ class FieldDefinition {
     props[fieldCharset] = readInteger(buffer, cursor, 2);
     props[fieldMaxColumnSize] = readInteger(buffer, cursor, 4);
     props[fieldFieldType] = readInteger(buffer, cursor, 1);
-    props[fieldDetailsFlag] = readInteger(buffer, cursor, 2);
+    props[fieldDetailFlag] = readInteger(buffer, cursor, 2);
     props[fieldDecimals] = readInteger(buffer, cursor, 1);
 
-    return FieldDefinition._internal(props);
+    return ResultSetColumn._internal(props);
   }
 
   final Map<String, dynamic> props;
 
-  const FieldDefinition._internal(this.props);
+  const ResultSetColumn._internal(this.props);
 
   String get catalog => props[fieldCatalog];
 
@@ -155,7 +162,7 @@ class FieldDefinition {
 
   int get decimals => props[fieldDecimals];
 
-  int get detailsFlag => props[fieldDetailsFlag];
+  int get detailFlag => props[fieldDetailFlag];
 
   @override
   String toString() {
@@ -163,11 +170,10 @@ class FieldDefinition {
   }
 }
 
-class TextResultRow {
+class ResultSetTextRow {
   static const fieldColumns = "columns";
-  static const fieldColumnData = "columnData";
 
-  static Future<TextResultRow> fromReader(
+  static Future<ResultSetTextRow> fromReader(
     PacketSocketReader reader,
     SessionContext session,
     int numberOfColumns,
@@ -179,51 +185,66 @@ class TextResultRow {
     cursor.increase(standardPacketHeaderLength);
     props[fieldColumns] = [];
     for (int i = 0; i < numberOfColumns; i++) {
-      props[fieldColumns].add({
-        fieldColumnData: readLengthEncodedString(buffer, cursor),
-      });
+      props[fieldColumns].add(readLengthEncodedString(buffer, cursor));
     }
 
-    return TextResultRow._internal(props);
+    return ResultSetTextRow._internal(props);
   }
 
   final Map<String, dynamic> props;
 
-  const TextResultRow._internal(this.props);
+  const ResultSetTextRow._internal(this.props);
 
-  String get data => props[fieldColumnData];
+  List<dynamic> get columns => props[fieldColumns];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
 }
 
-class BinaryResultRow {
+class ResultSetBinaryRow {
   static const fieldNullBitmap = "nullBitmap";
   static const fieldColumns = "columns";
-  static const fieldColumnData = "columnData";
 
-  static Future<BinaryResultRow> fromReader(
+  static Future<ResultSetBinaryRow> fromReader(
     PacketSocketReader reader,
     SessionContext session,
     int numberOfColumns,
+    List<ResultSetColumn> columns,
   ) async {
     final props = <String, dynamic>{};
     final cursor = Cursor.zero();
     final buffer = await reader.readPacket();
 
     cursor.increase(standardPacketHeaderLength);
-    props[fieldNullBitmap] =
-        readBytes(buffer, cursor, ((numberOfColumns + 9) / 8).floor());
+    cursor.increase(1); // discard leading byte
+    props[fieldNullBitmap] = Bitmap.from(
+      readBytes(buffer, cursor, ((numberOfColumns + 9) / 8).floor()),
+    );
     props[fieldColumns] = [];
     for (int i = 0; i < numberOfColumns; i++) {
-      props[fieldColumns].add({
-        fieldColumnData: null,
-      });
+      // Note: For result set row, the first two bits are unused.
+      if (props[fieldNullBitmap].at(2 + i)) {
+        props[fieldColumns].add(null);
+      } else {
+        props[fieldColumns].add(decode(columns[i], buffer, cursor));
+      }
     }
 
-    return BinaryResultRow._internal(props);
+    return ResultSetBinaryRow._internal(props);
   }
 
   final Map<String, dynamic> props;
 
-  const BinaryResultRow._internal(this.props);
+  const ResultSetBinaryRow._internal(this.props);
 
-  List<int> get nullBitmap => props[fieldNullBitmap];
+  Bitmap get nullBitmap => props[fieldNullBitmap];
+
+  List<dynamic> get columns => props[fieldColumns];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
 }

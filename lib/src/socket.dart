@@ -53,7 +53,12 @@ class PacketSocket implements PacketSocketReader {
     this._packetReceiver,
     this._rawSocket,
   ) {
-    _subscription = _rawSocket.listen(_onData);
+    _subscription = _rawSocket.listen(
+      _onData,
+      onError: _onError,
+      onDone: _onDone,
+      cancelOnError: true,
+    );
   }
 
   factory PacketSocket({
@@ -99,6 +104,15 @@ class PacketSocket implements PacketSocketReader {
 
   void _onData(List<int> data) {
     _packetReceiver.onData(data);
+  }
+
+  void _onDone() {
+    _packetReceiver.onDone();
+    print("socket is closed");
+  }
+
+  void _onError(Object error, [StackTrace? stackTrace]) {
+    print(error);
   }
 
   void write(List<int> data) {
@@ -286,6 +300,29 @@ class _PacketReceiver {
 
   Uint8List get packetBuffer => _packetBuffer;
 
+  void onData(List<int> data) async {
+    _writeToUnreadBuffer(data);
+    _logger.verbose(
+        "${data.length} bytes has been received and written to unread buffer (bufferSize=${_unreadBuffer.length}, written=${data.length})");
+
+    processUnread();
+  }
+
+  void onDone() {}
+
+  void _writeToUnreadBuffer(List<int> buffer) {
+    _unreadBuffer.addAll(buffer);
+  }
+
+  void _writeToPacketBuffer(List<int> data) {
+    _packetBufferWriter.add(data);
+    _packetBuffer = _packetBufferWriter.toBytes();
+
+    if (_statCollector.enabled) {
+      _statCollector.increaseBufferedPackets(countStandardPackets(data));
+    }
+  }
+
   void _releasePacketBuffer() {
     _logger.verbose(
         "buffered packets will be released (size=${formatSize(_packetBuffer.length)})");
@@ -304,27 +341,6 @@ class _PacketReceiver {
 
   void release() {
     _releasePacketBuffer();
-  }
-
-  void _writeToUnreadBuffer(List<int> buffer) {
-    _unreadBuffer.addAll(buffer);
-  }
-
-  void _writeToPacketBuffer(List<int> data) {
-    _packetBufferWriter.add(data);
-    _packetBuffer = _packetBufferWriter.toBytes();
-
-    if (_statCollector.enabled) {
-      _statCollector.increaseBufferedPackets(countStandardPackets(data));
-    }
-  }
-
-  void onData(List<int> data) async {
-    _writeToUnreadBuffer(data);
-    _logger.verbose(
-        "${data.length} bytes has been received and written to unread buffer (bufferSize=${_unreadBuffer.length}, written=${data.length})");
-
-    processUnread();
   }
 
   void _trackStandardPacketSequence(List<int> buffer) {
