@@ -164,6 +164,10 @@ class ResultSetColumn {
 
   int get detailFlag => props[fieldDetailFlag];
 
+  bool get unsigned => (detailFlag & fieldFlagUnsigned) > 0;
+
+  MysqlType get mysqlType => MysqlType(fieldType, unsigned, decimals);
+
   @override
   String toString() {
     return props.toString();
@@ -228,7 +232,7 @@ class ResultSetBinaryRow {
       if (props[fieldNullBitmap].at(2 + i)) {
         props[fieldColumns].add(null);
       } else {
-        props[fieldColumns].add(decode(columns[i], buffer, cursor));
+        props[fieldColumns].add(decode(columns[i].mysqlType, buffer, cursor));
       }
     }
 

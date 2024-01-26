@@ -182,7 +182,10 @@ class Bitmap {
 
   @override
   String toString() {
-    return _bitmap.map((x) => x.toRadixString(2).split('').reversed.join().padRight(8, '0')).join();
+    return _bitmap
+        .map((x) =>
+            x.toRadixString(2).split('').reversed.join().padRight(8, '0'))
+        .join();
   }
 }
 
@@ -203,6 +206,12 @@ extension IntListToUint8ListExtension on List<int> {
       return this as Uint8List;
     }
     return Uint8List.fromList(this);
+  }
+}
+
+extension BoolIntToBitmapExtension on List<bool> {
+  Bitmap toBitmap() {
+    return Bitmap.build(this);
   }
 }
 

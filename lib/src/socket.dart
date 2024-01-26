@@ -606,5 +606,5 @@ class _AsyncPacketReader implements AsyncPacketReader {
   }
 }
 
-// TODO(archartist): Implement fixed-size buffer to optimize the performance 
-//  of socket receiving and packet buffering.
+// TODO: Implement fixed-size buffer to optimize the performance of socket
+//  receiving and packet buffering.

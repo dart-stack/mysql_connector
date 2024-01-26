@@ -10,27 +10,12 @@ import 'package:mysql_connector/src/datatype.dart';
 import 'package:mysql_connector/src/utils.dart';
 import 'package:test/test.dart';
 
-import 'package:mysql_connector/src/connection.dart';
-
-Future<Connection> connect() async {
-  final fac = ConnectionFactory();
-  final conn = await fac.connect(
-    host: "127.0.0.1",
-    port: 3306,
-    user: "root",
-    password: "root",
-    database: "test",
-    enableCompression: true,
-    compressionThreshold: 0xffffff,
-  );
-
-  return conn;
-}
+import 'server.dart';
 
 void main() {
   group("COM_PING", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await Ping(conn.commandContext).execute(());
     });
@@ -38,7 +23,7 @@ void main() {
 
   group("COM_QUIT", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await Quit(conn.commandContext).execute(());
     });
@@ -47,14 +32,14 @@ void main() {
   group("COM_QUERY", () {
     group("SELECT", () {
       test("should be successful", () async {
-        final conn = await connect();
+        final conn = await connectToServer();
 
         await conn.query("SELECT * FROM users");
       }, timeout: Timeout(Duration(hours: 1)));
     });
 
     test("LOCAL INFILE", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await conn.query("LOAD DATA LOCAL INFILE 'users.csv' INTO TABLE users");
     });
@@ -62,7 +47,7 @@ void main() {
 
   group("COM_STATISTICS", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       print(await Statistics(conn.commandContext).execute(()));
     });
@@ -70,7 +55,7 @@ void main() {
 
   group("COM_SET_OPTION", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await SetOption(conn.commandContext)
           .execute((enableMultiStatements: true));
@@ -79,7 +64,7 @@ void main() {
 
   group("COM_SHUTDOWN", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await Shutdown(conn.commandContext).execute(());
     });
@@ -87,7 +72,7 @@ void main() {
 
   group("COM_DEBUG", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       await Debug(conn.commandContext).execute(());
     });
@@ -96,7 +81,7 @@ void main() {
   group("COM_STMT_PREPARE", () {
     group("without placeholder", () {
       test("should be successful", () async {
-        final conn = await connect();
+        final conn = await connectToServer();
 
         final result = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users"));
@@ -106,7 +91,7 @@ void main() {
 
     group("with placeholders", () {
       test("should be successful", () async {
-        final conn = await connect();
+        final conn = await connectToServer();
 
         final result = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users WHERE id = ?"));
@@ -117,7 +102,7 @@ void main() {
 
   group("COM_STMT_CLOSE", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       final stmt = await PrepareStmt(conn.commandContext)
           .execute((sqlStatement: "SELECT * FROM users"));
@@ -128,7 +113,7 @@ void main() {
 
   group("COM_STMT_RESET", () {
     test("should be successful", () async {
-      final conn = await connect();
+      final conn = await connectToServer();
 
       final stmt = await PrepareStmt(conn.commandContext)
           .execute((sqlStatement: "SELECT * FROM users"));
@@ -140,7 +125,7 @@ void main() {
   group("COM_STMT_EXECUTE", () {
     group("without placeholder", () {
       test("should be successful", () async {
-        final conn = await connect();
+        final conn = await connectToServer();
 
         final stmt = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users"));
@@ -158,7 +143,7 @@ void main() {
 
     group("with placeholders", () {
       test("should be successful", () async {
-        final conn = await connect();
+        final conn = await connectToServer();
 
         final stmt = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users WHERE id = ?"));
@@ -171,7 +156,7 @@ void main() {
           types: [
             [mysqlTypeLong, 0]
           ],
-          parameters: [encode(stmt.columns![0], 2)],
+          parameters: [encode(stmt.columns![0].mysqlType, 2)],
         ));
         print(rs);
       });

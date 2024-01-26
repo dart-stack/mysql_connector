@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/command.dart';
 import 'package:mysql_connector/src/packet.dart';
-import 'package:mysql_connector/src/protocol.dart';
 import 'package:mysql_connector/src/resultset.dart';
 import 'package:mysql_connector/src/session.dart';
 import 'package:mysql_connector/src/socket.dart';
@@ -95,11 +94,9 @@ class PrepareStmtResult {
 
   int get numberOfPlaceholders => props[fieldNumPlaceholders];
 
-  List<ResultSetColumn>? get columns =>
-      props[fieldColumns] as List<ResultSetColumn>?;
+  List<ResultSetColumn>? get columns => props[fieldColumns];
 
-  List<ResultSetColumn>? get placeholders =>
-      props[fieldPlaceholders] as List<ResultSetColumn>?;
+  List<ResultSetColumn>? get placeholders => props[fieldPlaceholders];
 }
 
 typedef CloseStmtParams = ({int statementId});
@@ -234,40 +231,42 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
 
 typedef FetchStmtParams = ({
   int statementId,
-  int numberOfRows,
+  int rowsToFetch,
   int numberOfColumns,
   List<ResultSetColumn> columns,
 });
 
-final class FetchStmt extends CommandBase<FetchStmtParams, void> {
+final class FetchStmt
+    extends CommandBase<FetchStmtParams, List<ResultSetBinaryRow>> {
   FetchStmt(CommandContext context) : super(context);
 
   @override
-  Future<void> execute(FetchStmtParams params) async {
+  Future<List<ResultSetBinaryRow>> execute(FetchStmtParams params) async {
     await acquire();
     try {
       sendCommand([
         createPacket()
           ..addByte(0x17)
           ..addInteger(4, params.statementId)
-          ..addInteger(4, params.numberOfRows)
+          ..addInteger(4, params.rowsToFetch)
       ]);
 
+      final rows = <ResultSetBinaryRow>[];
       for (int i = 0;; i++) {
         final buffer = await socketReader.readPacket();
         switch (buffer[4]) {
           case 0xFE:
             logger.debug("$i rows was fetched");
-            return;
+            return rows;
 
           default:
             socketReader.cursor.increase(-buffer.length);
-            await ResultSetBinaryRow.fromReader(
+            rows.add(await ResultSetBinaryRow.fromReader(
               socketReader,
               session,
               params.numberOfColumns,
               params.columns,
-            );
+            ));
         }
       }
     } finally {
@@ -306,7 +305,6 @@ final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
 
           default:
             socketReader.cursor.increase(-buffer.length);
-            // FIXME: temporary assigned value
             await ResultSetBinaryRow.fromReader(
               socketReader,
               session,

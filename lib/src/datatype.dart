@@ -5,35 +5,34 @@ import 'package:mysql_connector/src/packet.dart';
 import 'package:mysql_connector/src/resultset.dart';
 import 'package:mysql_connector/src/utils.dart';
 
-// TODO: adopt `Codec` in which `dart:convert`
+// TODO: adopt `Codec` of `dart:convert`
 
-// See https://mariadb.com/kb/en/com_stmt_execute/#binary-parameter-encoding
-List<int> encode(ResultSetColumn column, dynamic value) {
-  switch (column.fieldType) {
+// See https://mariadb.com/kb/en/result-set-packets/#field-types
+List<int> encode(MysqlType mysqlType, dynamic value) {
+  switch (mysqlType.mysqlType) {
     case mysqlTypeDouble:
       return encodeDouble(value);
 
     case mysqlTypeLonglong:
-      return encodeBigInt(value, (column.detailFlag & fieldFlagUnsigned) > 0);
+      return encodeBigInt(value, mysqlType.unsigned);
 
     case mysqlTypeLong:
-      return encodeInteger(value, (column.detailFlag & fieldFlagUnsigned) > 0);
+      return encodeInteger(value, mysqlType.unsigned);
 
     case mysqlTypeInt24:
-      return encodeMediumInt(
-          value, (column.detailFlag & fieldFlagUnsigned) > 0);
+      return encodeInteger(value, mysqlType.unsigned);
 
     case mysqlTypeFloat:
       return encodeFloat(value);
 
     case mysqlTypeShort:
-      return encodeSmallInt(value, (column.detailFlag & fieldFlagUnsigned) > 0);
+      return encodeSmallInt(value, mysqlType.unsigned);
 
     case mysqlTypeYear:
       return encodeYear(value);
 
     case mysqlTypeTiny:
-      return encodeTinyInt(value, (column.detailFlag & fieldFlagUnsigned) > 0);
+      return encodeTinyInt(value, mysqlType.unsigned);
 
     case mysqlTypeDate:
       return encodeDate(value);
@@ -45,8 +44,10 @@ List<int> encode(ResultSetColumn column, dynamic value) {
     case mysqlTypeTime:
       return encodeTime(value);
 
+    // TODO: requiring further research for encoding MYSQL_TYPE_DECIMAL
+    case mysqlTypeDecimal:
     case mysqlTypeNewdecimal:
-      return encodeDecimal(value, column.decimals);
+      return encodeDecimal(value, mysqlType.decimals);
 
     case mysqlTypeTinyBlob:
     case mysqlTypeMediumBlob:
@@ -56,52 +57,52 @@ List<int> encode(ResultSetColumn column, dynamic value) {
     case mysqlTypeString:
     case mysqlTypeVarchar:
     case mysqlTypeVarString:
+    case mysqlTypeJson:
+    // TODO: requiring further research for encoding MYSQL_TYPE_BIT
+    case mysqlTypeBit:
+    // TODO: requiring further research for encoding MYSQL_TYPE_NEWDATE
+    case mysqlTypeNewdate:
+    // TODO: requiring further research for encoding MYSQL_TYPE_ENUM
+    case mysqlTypeEnum:
+    // TODO: requiring further research for encoding MYSQL_TYPE_SET
+    case mysqlTypeSet:
       final writer = BytesBuilder();
       writeLengthEncodedBytes(writer, value);
       return writer.takeBytes();
 
     default:
-      throw ArgumentError("unsupported mysql type ${column.fieldType}");
+      throw ArgumentError("unsupported mysql type ${mysqlType.mysqlType}");
   }
 }
 
 // See https://mariadb.com/kb/en/resultset-row/#binary-resultset-row
-dynamic decode(
-  ResultSetColumn column,
-  List<int> buffer, [
-  Cursor? cursor,
-]) {
+dynamic decode(MysqlType mysqlType, List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
 
-  switch (column.fieldType) {
+  switch (mysqlType.mysqlType) {
     case mysqlTypeDouble:
       return decodeDouble(buffer, cursor);
 
     case mysqlTypeLonglong:
-      return decodeBigInt(
-          buffer, (column.detailFlag & fieldFlagUnsigned) > 0, cursor);
+      return decodeBigInt(buffer, mysqlType.unsigned, cursor);
 
     case mysqlTypeLong:
-      return decodeInteger(
-          buffer, (column.detailFlag & fieldFlagUnsigned) > 0, cursor);
+      return decodeInteger(buffer, mysqlType.unsigned, cursor);
 
     case mysqlTypeInt24:
-      return decodeMediumInt(
-          buffer, (column.detailFlag & fieldFlagUnsigned) > 0, cursor);
+      return decodeMediumInt(buffer, mysqlType.unsigned, cursor);
 
     case mysqlTypeFloat:
       return decodeFloat(buffer, cursor);
 
     case mysqlTypeShort:
-      return decodeSmallInt(
-          buffer, (column.detailFlag & fieldFlagUnsigned) > 0, cursor);
+      return decodeSmallInt(buffer, mysqlType.unsigned, cursor);
 
     case mysqlTypeYear:
       return decodeYear(buffer, cursor);
 
     case mysqlTypeTiny:
-      return decodeTinyInt(
-          buffer, (column.detailFlag & fieldFlagUnsigned) > 0, cursor);
+      return decodeTinyInt(buffer, mysqlType.unsigned, cursor);
 
     case mysqlTypeDate:
       return decodeDate(buffer, cursor);
@@ -113,6 +114,8 @@ dynamic decode(
     case mysqlTypeTime:
       return decodeTime(buffer, cursor);
 
+    // TODO: requiring further research for decoding MYSQL_TYPE_DECIMAL
+    case mysqlTypeDecimal:
     case mysqlTypeNewdecimal:
       return decodeDecimal(buffer, cursor);
 
@@ -124,6 +127,14 @@ dynamic decode(
     case mysqlTypeString:
     case mysqlTypeVarchar:
     case mysqlTypeVarString:
+    // TODO: requiring further research for decoding MYSQL_TYPE_BIT
+    case mysqlTypeBit:
+    // TODO: requiring further research for decoding MYSQL_TYPE_NEWDATE
+    case mysqlTypeNewdate:
+    // TODO: requiring further research for decoding MYSQL_TYPE_ENUM
+    case mysqlTypeEnum:
+    // TODO: requiring further research for decoding MYSQL_TYPE_SET
+    case mysqlTypeSet:
       return readLengthEncodedBytes(buffer, cursor);
   }
 }
@@ -453,4 +464,99 @@ DateTime decodeTime(List<int> buffer, [Cursor? cursor]) {
     0,
     data.getUint32(7), // microsecond
   );
+}
+
+final class MysqlType {
+  final int mysqlType;
+
+  final bool unsigned;
+
+  final int decimals;
+
+  const MysqlType(this.mysqlType, this.unsigned, this.decimals);
+}
+
+MysqlType _findBestMatchingMysqlType(dynamic value) {
+  switch (value) {
+    case final int value:
+      switch (value.bitLength) {
+        case 64:
+          return MysqlType(mysqlTypeLonglong, true, 0);
+        case 63:
+          return MysqlType(mysqlTypeLonglong, false, 0);
+        case 32:
+          return MysqlType(mysqlTypeLong, true, 0);
+        case 31:
+          return MysqlType(mysqlTypeLong, false, 0);
+        case 24:
+          return MysqlType(mysqlTypeInt24, true, 0);
+        case 23:
+          return MysqlType(mysqlTypeInt24, false, 0);
+        case 16:
+          return MysqlType(mysqlTypeShort, true, 0);
+        case 15:
+          return MysqlType(mysqlTypeShort, false, 0);
+        case 8:
+          return MysqlType(mysqlTypeTiny, true, 0);
+        case 7:
+          return MysqlType(mysqlTypeTiny, false, 0);
+        case > 32 && < 64:
+          return MysqlType(mysqlTypeLonglong, false, 0);
+        case > 16 && < 32:
+          return MysqlType(mysqlTypeLong, false, 0);
+        case > 8 && < 16:
+          return MysqlType(mysqlTypeShort, false, 0);
+        case >= 0 && < 8:
+          return MysqlType(mysqlTypeTiny, false, 0);
+        default:
+          throw UnsupportedError(
+              "unsupported integer with bit length ${value.bitLength}");
+      }
+
+    case final double _:
+      return MysqlType(mysqlTypeDouble, false, 0);
+
+    case final String _:
+      return MysqlType(mysqlTypeString, false, 0);
+
+    case final DateTime _:
+      return MysqlType(mysqlTypeTimestamp, false, 0);
+
+    case final List<int> _:
+      return MysqlType(mysqlTypeBlob, false, 0);
+  }
+
+  throw UnsupportedError(
+      "unsupported dart type ${value.runtimeType} to find best matching mysql type");
+}
+
+class MysqlTypedValue {
+  final MysqlType mysqlType;
+
+  final bool nullValue;
+
+  final dynamic dartValue;
+
+  const MysqlTypedValue(this.mysqlType, this.nullValue, this.dartValue);
+
+  factory MysqlTypedValue.withBestMatchingType(dynamic value) {
+    return switch (value) {
+      // TODO: For null values, it seems that MYSQL_TYPE_NULL is not supported
+      //  for direct usage in COM_STMT_EXECUTE. Instead, MYSQL_TYPE_TINY is
+      //  adopted temporarily, requiring further research.
+      null => MysqlTypedValue(MysqlType(mysqlTypeTiny, false, 0), true, null),
+      _ => MysqlTypedValue(_findBestMatchingMysqlType(value), false, value)
+    };
+  }
+
+  factory MysqlTypedValue.from(dynamic value) {
+    return switch (value) {
+      MysqlTypedValue value => value,
+      _ => MysqlTypedValue.withBestMatchingType(value),
+    };
+  }
+
+  // TODO: We temporarily adopt an empty list to represent null.
+  List<int> get encoded =>
+      nullValue ? Uint8List(0) : encode(mysqlType, dartValue);
 }
