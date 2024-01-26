@@ -13,7 +13,7 @@ class ResultSet {
   // TODO: Deprecate PacketSocketReader, and use Stream instead.
   static Future<ResultSet> fromSocket(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
     bool binary,
   ) async {
     final props = <String, dynamic>{};
@@ -78,7 +78,7 @@ class ResultSet {
 
 Future<int> _readColumnCount(
   PacketSocketReader reader,
-  SessionContext session,
+  SessionState session,
 ) async {
   final buffer = await reader.readPacket();
   return readLengthEncodedInteger(
@@ -105,7 +105,7 @@ class ResultSetColumn {
 
   static Future<ResultSetColumn> fromReader(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
   ) async {
     final props = <String, dynamic>{};
     final cursor = Cursor.zero();
@@ -179,7 +179,7 @@ class ResultSetTextRow {
 
   static Future<ResultSetTextRow> fromReader(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
     int numberOfColumns,
   ) async {
     final props = <String, dynamic>{};
@@ -213,7 +213,7 @@ class ResultSetBinaryRow {
 
   static Future<ResultSetBinaryRow> fromReader(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
     int numberOfColumns,
     List<ResultSetColumn> columns,
   ) async {

@@ -14,7 +14,8 @@ final class SetOption extends CommandBase<SetOptionParams, void> {
       sendCommand([
         createPacket()
           ..addByte(0x1B)
-          ..addInteger(2, params.enableMultiStatements ? 0 : 1),
+          ..addInteger(2, params.enableMultiStatements ? 0 : 1)
+          ..terminated(),
       ]);
 
       final packet = await socketReader.readPacket();

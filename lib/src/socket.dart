@@ -32,7 +32,7 @@ class PacketSocket implements PacketSocketReader {
 
   final PacketSequenceManager _sequenceManager;
 
-  final SessionContext _session;
+  final SessionState _session;
 
   final _StatCollector _statCollector;
 
@@ -65,7 +65,7 @@ class PacketSocket implements PacketSocketReader {
     required Logger logger,
     required PacketCompressor packetCompressor,
     required PacketSequenceManager sequenceManager,
-    required SessionContext session,
+    required SessionState session,
     required Socket rawSocket,
     required int receiveBufferSize,
   }) {
@@ -257,7 +257,7 @@ enum _ReadState { readHeader, readPayload }
 class _PacketReceiver {
   final Logger _logger;
 
-  final SessionContext _session;
+  final SessionState _session;
 
   final PacketCompressor _packetCompressor;
 

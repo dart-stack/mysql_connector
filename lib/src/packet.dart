@@ -52,9 +52,20 @@ void writeLengthEncodedBytes(BytesBuilder writer, List<int> value) {
   writeBytes(writer, value);
 }
 
-void writeZeroTerminatedBytes(BytesBuilder writer, List<int> value) {
-  writer.add(
-      value.expand((byte) => byte == 0x00 ? [0x5c, 0x00] : [byte]).toList());
+void writeZeroTerminatingBytes(
+  BytesBuilder writer,
+  List<int> value, {
+  bool escape = false,
+}) {
+  final escapingSubstitution = const {
+    0x00: [0x5c, 0x00],
+  };
+  if (escape) {
+    writer.add(
+        value.expand((byte) => escapingSubstitution[byte] ?? [byte]).toList());
+  } else {
+    writer.add(value);
+  }
   writer.addByte(0x00);
 }
 
@@ -66,12 +77,12 @@ void writeString(
   writeBytes(writer, encoding.encode(value));
 }
 
-void writeZeroTerminatedString(
+void writeZeroTerminatingString(
   BytesBuilder writer,
   String value, [
   Encoding encoding = utf8,
 ]) {
-  writeZeroTerminatedBytes(writer, encoding.encode(value));
+  writeZeroTerminatingBytes(writer, encoding.encode(value));
 }
 
 void writeLengthEncodedString(
@@ -87,11 +98,15 @@ void writeLengthEncodedString(
 }
 
 class PacketBuilder {
-  final BytesBuilder _writer = BytesBuilder();
+  final BytesBuilder _payloadWriter = BytesBuilder();
+
+  final List<(int, int)> _payloadRanges = [];
 
   final Encoding _encoding;
 
   final int _maxPacketSize;
+
+  int _lastTerminatedAt = 0;
 
   PacketBuilder({
     Encoding encoding = utf8,
@@ -100,54 +115,55 @@ class PacketBuilder {
         _maxPacketSize = maxPacketSize;
 
   int get length =>
-      _writer.length + min(1, (_writer.length / _maxPacketSize).ceil()) * 4;
+      _payloadWriter.length +
+      min(1, (_payloadWriter.length / _maxPacketSize).ceil()) * 4;
 
   void addByte(int byte) {
-    _writer.addByte(byte);
+    _payloadWriter.addByte(byte);
   }
 
   void addBytes(List<int> bytes) {
-    _writer.add(bytes);
+    _payloadWriter.add(bytes);
   }
 
   void addInteger(int length, int value) {
     assert(const [1, 2, 3, 4, 6, 8].contains(length));
 
     for (int i = 0; i < length; i++) {
-      _writer.addByte((value >> (i * 8)) & 0xff);
+      _payloadWriter.addByte((value >> (i * 8)) & 0xff);
     }
   }
 
   void addString(String value) {
-    _writer.add(_encoding.encode(value));
+    _payloadWriter.add(_encoding.encode(value));
   }
 
   void addLengthEncodedInteger(int? value) {
     if (value == null) {
-      _writer.addByte(0xFB);
+      _payloadWriter.addByte(0xFB);
       return;
     }
     if (value < 0xfb) {
-      _writer.addByte(value);
+      _payloadWriter.addByte(value);
     } else if (value <= 0xffff) {
-      _writer.addByte(0xFC);
-      _writer.addByte((value >> 0) & 0xff);
-      _writer.addByte((value >> 8) & 0xff);
+      _payloadWriter.addByte(0xFC);
+      _payloadWriter.addByte((value >> 0) & 0xff);
+      _payloadWriter.addByte((value >> 8) & 0xff);
     } else if (value <= 0xffffff) {
-      _writer.addByte(0xFD);
-      _writer.addByte((value >> 0) & 0xff);
-      _writer.addByte((value >> 8) & 0xff);
-      _writer.addByte((value >> 16) & 0xff);
+      _payloadWriter.addByte(0xFD);
+      _payloadWriter.addByte((value >> 0) & 0xff);
+      _payloadWriter.addByte((value >> 8) & 0xff);
+      _payloadWriter.addByte((value >> 16) & 0xff);
     } else {
-      _writer.addByte(0xFE);
-      _writer.addByte((value >> 0) & 0xff);
-      _writer.addByte((value >> 8) & 0xff);
-      _writer.addByte((value >> 16) & 0xff);
-      _writer.addByte((value >> 24) & 0xff);
-      _writer.addByte((value >> 32) & 0xff);
-      _writer.addByte((value >> 40) & 0xff);
-      _writer.addByte((value >> 48) & 0xff);
-      _writer.addByte((value >> 56) & 0xff);
+      _payloadWriter.addByte(0xFE);
+      _payloadWriter.addByte((value >> 0) & 0xff);
+      _payloadWriter.addByte((value >> 8) & 0xff);
+      _payloadWriter.addByte((value >> 16) & 0xff);
+      _payloadWriter.addByte((value >> 24) & 0xff);
+      _payloadWriter.addByte((value >> 32) & 0xff);
+      _payloadWriter.addByte((value >> 40) & 0xff);
+      _payloadWriter.addByte((value >> 48) & 0xff);
+      _payloadWriter.addByte((value >> 56) & 0xff);
     }
   }
 
@@ -158,12 +174,19 @@ class PacketBuilder {
     }
     final encoded = _encoding.encode(value);
     addLengthEncodedInteger(encoded.length);
-    _writer.add(encoded);
+    _payloadWriter.add(encoded);
   }
 
-  void addZeroTerminatedString(String value) {
-    _writer.add(_encoding.encode(value));
-    _writer.addByte(0x00);
+  void addZeroTerminatingString(String value) {
+    _payloadWriter.add(_encoding.encode(value));
+    _payloadWriter.addByte(0x00);
+  }
+
+  void terminated() {
+    final start = _lastTerminatedAt;
+    final end = _payloadWriter.length;
+    _payloadRanges.add((start, end));
+    _lastTerminatedAt = end;
   }
 
   Uint8List _buildPacketLength(int length) {
@@ -176,30 +199,49 @@ class PacketBuilder {
   }
 
   Uint8List _splitAndBuild() {
-    final buffer = BytesBuilder();
-    if (_writer.isEmpty) {
-      buffer.add(const [0x00, 0x00, 0x00, 0xff]);
-      return buffer.takeBytes();
+    if (_payloadWriter.isEmpty) {
+      return Uint8List(4)..setRange(0, 4, const [0x00, 0x00, 0x00, 0x00]);
     }
+    final packetBuffer = BytesBuilder();
+    final payloadBuffer = _payloadWriter.toBytes();
 
-    final payloadBuffer = _writer.toBytes();
-    int offset = 0;
-    for (;;) {
-      if (offset == payloadBuffer.length) {
-        return buffer.takeBytes();
-      }
-      if (payloadBuffer.length - offset > _maxPacketSize) {
-        buffer.add(_buildPacketLength(_maxPacketSize));
-        buffer.addByte(0xff);
-        buffer.add(payloadBuffer.sublist(offset, offset + _maxPacketSize));
-        offset += _maxPacketSize;
-      } else {
-        buffer.add(_buildPacketLength(payloadBuffer.length - offset));
-        buffer.addByte(0xff);
-        buffer.add(payloadBuffer.sublist(offset, payloadBuffer.length));
-        offset = payloadBuffer.length;
+    int sequence = 0;
+    bool appendEmptyPacket = false;
+    for (final payloadRange in _payloadRanges) {
+      int offset = payloadRange.$1;
+      for (;;) {
+        if (offset == payloadRange.$2) {
+          // Note: once the length of last packet's payload reaches 0xffffff,
+          //  it is required to append an empty packet to indicate the packet
+          //  is terminated.
+          if (appendEmptyPacket) {
+            packetBuffer.add(const [0x00, 0x00, 0x00]);
+            packetBuffer.addByte(sequence++);
+          }
+          break;
+        }
+        if (payloadRange.$2 - offset > _maxPacketSize) {
+          packetBuffer.add(_buildPacketLength(_maxPacketSize));
+          packetBuffer.addByte(sequence++);
+          packetBuffer
+              .add(payloadBuffer.sublist(offset, offset + _maxPacketSize));
+          offset += _maxPacketSize;
+          appendEmptyPacket = true;
+        } else {
+          packetBuffer.add(_buildPacketLength(payloadRange.$2 - offset));
+          packetBuffer.addByte(sequence++);
+          packetBuffer.add(payloadBuffer.sublist(offset, payloadRange.$2));
+          offset = payloadRange.$2;
+          appendEmptyPacket = false;
+        }
+        // reset sequence if sequence is exceeded.
+        // see https://mariadb.com/kb/en/0-packet/#packet-splitting
+        if (sequence == 0xff + 1) {
+          sequence = 0;
+        }
       }
     }
+    return packetBuffer.takeBytes();
   }
 
   Uint8List build() {
@@ -230,7 +272,7 @@ class OkPacket {
 
   static OkPacket from(
     List<int> buffer,
-    SessionContext session, [
+    SessionState session, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -254,7 +296,7 @@ class OkPacket {
 
   static Future<OkPacket> fromSocket(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
   ) async {
     return from(await reader.readPacket(), session);
   }
@@ -292,7 +334,7 @@ class ErrPacket {
 
   static ErrPacket from(
     List<int> buffer,
-    SessionContext session, [
+    SessionState session, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -322,7 +364,7 @@ class ErrPacket {
 
   static Future<ErrPacket> fromSocket(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
   ) async {
     return from(await reader.readPacket(), session);
   }
@@ -366,7 +408,7 @@ class EofPacket {
 
   static EofPacket from(
     List<int> buffer,
-    SessionContext session, [
+    SessionState session, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -381,7 +423,7 @@ class EofPacket {
 
   static Future<EofPacket> fromSocket(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
   ) async {
     return from(await reader.readPacket(), session);
   }

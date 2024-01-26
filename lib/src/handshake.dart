@@ -44,7 +44,7 @@ class Handshaker {
 
   final PacketSocket _socket;
 
-  final SessionContext _session;
+  final SessionState _session;
 
   final HandshakerDelegate _delegate;
 
@@ -164,7 +164,7 @@ class Handshaker {
     cursor.increase(standardPacketHeaderLength);
 
     props["protocolVersion"] = readInteger(message, cursor, 1);
-    props["serverVersion"] = readZeroTerminatedString(message, cursor);
+    props["serverVersion"] = readZeroTerminatingString(message, cursor);
     props["connectionId"] = readInteger(message, cursor, 4);
     props["scramble1"] = readString(message, cursor, 8);
     props["reserved1"] = readBytes(message, cursor, 1);
@@ -192,7 +192,7 @@ class Handshaker {
     }
     if ((props["serverCaps"] & capPluginAuth) != 0) {
       props["authenticationPluginName"] =
-          readZeroTerminatedString(message, cursor);
+          readZeroTerminatingString(message, cursor);
     }
 
     _scramble = props["scramble1"] + props["scramble2"];
@@ -233,7 +233,7 @@ class Handshaker {
     } else {
       writeBytes(builder, List.filled(4, 0));
     }
-    writeZeroTerminatedString(builder, _connectOptions.user);
+    writeZeroTerminatingString(builder, _connectOptions.user);
 
     var encodedPassword = MysqlNativePasswordAuthPlugin.encrypt(
       _connectOptions.password,
@@ -245,13 +245,13 @@ class Handshaker {
       writeInteger(builder, 1, encodedPassword.length);
       writeBytes(builder, encodedPassword);
     } else {
-      writeZeroTerminatedBytes(builder, []);
+      writeZeroTerminatingBytes(builder, []);
     }
     if ((clientCaps & capConnectWithDB) != 0) {
-      writeZeroTerminatedString(builder, _connectOptions.database!);
+      writeZeroTerminatingString(builder, _connectOptions.database!);
     }
     if ((clientCaps & capPluginAuth) != 0) {
-      writeZeroTerminatedString(builder, _connectOptions.authMethod);
+      writeZeroTerminatingString(builder, _connectOptions.authMethod);
     }
     if ((clientCaps & capConnectAttrs) != 0) {
       writeLengthEncodedInteger(builder, 0);
@@ -284,7 +284,7 @@ class Handshaker {
       );
     }
     cursor.increase(1); // skip leading byte
-    props["authPluginName"] = readZeroTerminatedString(message, cursor);
+    props["authPluginName"] = readZeroTerminatingString(message, cursor);
     // FIXME: I don't know why there is a '\0' at the end of the packet,
     //  refers to the protocol documentation, that there should be
     //  a string<EOF>.

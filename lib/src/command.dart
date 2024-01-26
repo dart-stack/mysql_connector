@@ -6,7 +6,7 @@ import 'socket.dart';
 abstract interface class CommandContext {
   Logger get logger;
 
-  SessionContext get session;
+  SessionState get session;
 
   PacketSocketReader get socketReader;
 
@@ -26,7 +26,7 @@ abstract base class _CommandBase {
 
   Logger get logger => _context.logger;
 
-  SessionContext get session => _context.session;
+  SessionState get session => _context.session;
 
   PacketSocketReader get socketReader => _context.socketReader;
 

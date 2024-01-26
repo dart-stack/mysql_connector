@@ -9,12 +9,16 @@ final class Ping extends CommandBase<PingParams, void> {
   Future<void> execute(PingParams params) async {
     await acquire();
 
-    sendCommand([
-      createPacket()..addByte(0x0e),
-    ]);
+    try {
+      sendCommand([
+        createPacket()
+          ..addByte(0x0e)
+          ..terminated(),
+      ]);
 
-    print(await socketReader.packetReader.readInteger(1));
-
-    release();
+      print(await socketReader.packetReader.readInteger(1));
+    } finally {
+      release();
+    }
   }
 }

@@ -11,7 +11,11 @@ final class Debug extends CommandBase<DebugParams, void> {
   Future<void> execute(DebugParams params) async {
     await acquire();
     try {
-      sendCommand([createPacket()..addByte(0x0D)]);
+      sendCommand([
+        createPacket()
+          ..addByte(0x0D)
+          ..terminated()
+      ]);
 
       final packet = await socketReader.readPacket();
       switch (packet[4]) {

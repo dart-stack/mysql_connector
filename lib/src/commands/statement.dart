@@ -22,8 +22,8 @@ final class PrepareStmt
         createPacket()
           ..addByte(0x16)
           ..addString(params.sqlStatement)
+          ..terminated()
       ]);
-
       return await PrepareStmtResult.fromReader(socketReader, session);
     } finally {
       release();
@@ -40,7 +40,7 @@ class PrepareStmtResult {
 
   static Future<PrepareStmtResult> fromReader(
     PacketSocketReader reader,
-    SessionContext session,
+    SessionState session,
   ) async {
     final props = <String, dynamic>{};
     // process first packet
@@ -112,6 +112,7 @@ final class CloseStmt extends CommandBase<CloseStmtParams, void> {
         createPacket()
           ..addByte(0x19)
           ..addInteger(4, params.statementId)
+          ..terminated()
       ]);
     } finally {
       release();
@@ -132,6 +133,7 @@ final class ResetStmt extends CommandBase<ResetStmtParams, void> {
         createPacket()
           ..addByte(0x1A)
           ..addInteger(4, params.statementId)
+          ..terminated()
       ]);
 
       final buffer = await socketReader.readPacket();
@@ -197,6 +199,7 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
         }
         command.addBytes(writer.takeBytes());
       }
+      command.terminated();
       sendCommand([command]);
 
       final buffer = await socketReader.readPacket();
@@ -249,6 +252,7 @@ final class FetchStmt
           ..addByte(0x17)
           ..addInteger(4, params.statementId)
           ..addInteger(4, params.rowsToFetch)
+          ..terminated(),
       ]);
 
       final rows = <ResultSetBinaryRow>[];
@@ -294,6 +298,7 @@ final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
           ..addByte(0x17)
           ..addInteger(4, params.statementId)
           ..addInteger(4, params.parameter)
+          ..terminated(),
       ]);
 
       for (int i = 0;; i++) {

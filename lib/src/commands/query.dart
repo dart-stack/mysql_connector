@@ -14,14 +14,17 @@ final class Query extends CommandBase<QueryParams, dynamic> {
   @override
   Future<dynamic> execute(QueryParams params) async {
     await acquire();
-
-    sendCommand([
-      createPacket()
-        ..addByte(0x03)
-        ..addString(params.sqlStatement),
-    ]);
-
-    return handleResponse();
+    try {
+      sendCommand([
+        createPacket()
+          ..addByte(0x03)
+          ..addString(params.sqlStatement)
+          ..terminated(),
+      ]);
+      return handleResponse();
+    } finally {
+      release();
+    }
   }
 
   Future handleResponse() async {
@@ -30,16 +33,11 @@ final class Query extends CommandBase<QueryParams, dynamic> {
       case 0x00:
         final props = OkPacket.from(packet, session);
         logger.debug(props);
-
-        release();
-
         return;
 
       case 0xFF:
         final props = ErrPacket.from(packet, session);
         logger.debug(props);
-
-        release();
 
         return Future.error(MysqlExecutionException(
           props.errorCode,
@@ -59,8 +57,10 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         }
 
         sendCommand([
-          createPacket()..addBytes(fileBuffer.takeBytes()),
-          createPacket(),
+          createPacket()
+            ..addBytes(fileBuffer.takeBytes())
+            ..terminated(),
+          createPacket()..terminated(),
         ]);
 
         packet = await socketReader.readPacket();
@@ -68,15 +68,11 @@ final class Query extends CommandBase<QueryParams, dynamic> {
           case 0x00:
             final ok = OkPacket.from(packet, session);
             logger.debug(ok);
-
-            release();
             return Future.value(ok);
 
           case 0xFF:
             final err = ErrPacket.from(packet, session);
             logger.debug(err);
-
-            release();
             return Future.error(err.errorCode);
         }
 
@@ -84,8 +80,6 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         socketReader.cursor.increase(-packet.length);
         final result = await ResultSet.fromSocket(socketReader, session, false);
         print("${result.rows.length} rows was fetched");
-
-        release();
         return result;
     }
   }

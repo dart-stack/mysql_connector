@@ -77,9 +77,9 @@ class Connection {
 
   late ConnectionState _connectionState;
 
-  late _SessionContext _sessionContext;
+  late _SessionState _sessionState;
 
-  late CommandContext _commandContext;
+  late _CommandContext _commandContext;
 
   Connection(
     this._logger,
@@ -88,7 +88,7 @@ class Connection {
     this._connectOptions,
   );
 
-  SessionContext get sessionContext => _sessionContext;
+  SessionState get sessionState => _sessionState;
 
   CommandContext get commandContext => _commandContext;
 
@@ -97,7 +97,7 @@ class Connection {
   }
 
   void _reset() {
-    _sessionContext = _SessionContext();
+    _sessionState = _SessionState();
     _connectionState = ConnectionState.connecting;
 
     final ex = MysqlConnectionResetException();
@@ -117,7 +117,7 @@ class Connection {
       logger: _logger,
       packetCompressor: _packetCompressor,
       sequenceManager: _sequenceManager,
-      session: sessionContext,
+      session: sessionState,
       rawSocket: rawSocket,
       receiveBufferSize: receiveBufferSize,
     );
@@ -126,7 +126,7 @@ class Connection {
   Future<void> connect() async {
     _reset();
 
-    _sessionContext = _SessionContext();
+    _sessionState = _SessionState();
     _commandContext = _CommandContext(this);
     _rawSocket = await _createSocketAndConnect();
     _socket = _createPacketSocket(_rawSocket, 1024 * 1024 * 1);
@@ -135,8 +135,8 @@ class Connection {
       final handshaker = Handshaker(
         _logger,
         _socket,
-        _sessionContext,
-        _sessionContext,
+        _sessionState,
+        _sessionState,
         _connectOptions,
       );
       await handshaker.perform();
@@ -165,9 +165,9 @@ class Connection {
   PacketBuilder createPacket() {
     return PacketBuilder(
       encoding: utf8,
-      maxPacketSize: _sessionContext.compressionEnabled
-          ? _sessionContext.maxPacketSize - standardPacketHeaderLength
-          : _sessionContext.maxPacketSize,
+      maxPacketSize: _sessionState.compressionEnabled
+          ? _sessionState.maxPacketSize - standardPacketHeaderLength
+          : _sessionState.maxPacketSize,
     );
   }
 
@@ -190,7 +190,7 @@ class Connection {
   }
 }
 
-class _SessionContext implements SessionContext, HandshakerDelegate {
+class _SessionState implements SessionState, HandshakerDelegate {
   int _protocolVersion = 0;
 
   String _serverVersion = "";
@@ -209,7 +209,7 @@ class _SessionContext implements SessionContext, HandshakerDelegate {
 
   bool _compressionEnabled = false;
 
-  _SessionContext();
+  _SessionState();
 
   @override
   int get protocolVersion => _protocolVersion;
@@ -298,7 +298,7 @@ class _CommandContext implements CommandContext {
   Logger get logger => connection._logger;
 
   @override
-  SessionContext get session => connection.sessionContext;
+  SessionState get session => connection.sessionState;
 
   @override
   PacketSocketReader get socketReader => connection._socket;

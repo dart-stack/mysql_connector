@@ -1,4 +1,4 @@
-abstract interface class SessionContext {
+abstract interface class SessionState {
   int get protocolVersion;
 
   String get serverVersion;

@@ -11,7 +11,9 @@ final class Statistics extends CommandBase<StatisticsParams, String> {
     await acquire();
     try {
       sendCommand([
-        createPacket()..addByte(0x09),
+        createPacket()
+          ..addByte(0x09)
+          ..terminated(),
       ]);
 
       final packet = await socketReader.readPacket();

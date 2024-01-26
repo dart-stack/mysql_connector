@@ -14,7 +14,8 @@ final class SetOption extends CommandBase<ProcessKillParams, void> {
       sendCommand([
         createPacket()
           ..addByte(0x0C)
-          ..addInteger(4, params.processId),
+          ..addInteger(4, params.processId)
+          ..terminated(),
       ]);
 
       final packet = await socketReader.readPacket();

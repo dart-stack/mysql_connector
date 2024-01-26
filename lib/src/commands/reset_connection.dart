@@ -8,13 +8,15 @@ final class ResetConnection extends CommandBase<ResetConnectionParams, void> {
   @override
   Future<void> execute(ResetConnectionParams params) async {
     await acquire();
-
-    sendCommand([
-      createPacket()..addByte(0x1F),
-    ]);
-
-    await socketReader.readPacket();
-
-    release();
+    try {
+      sendCommand([
+        createPacket()
+          ..addByte(0x1F)
+          ..terminated(),
+      ]);
+      await socketReader.readPacket();
+    } finally {
+      release();
+    }
   }
 }

@@ -125,7 +125,7 @@ String? readLengthEncodedString(
   return readString(buffer, cursor, length, encoding);
 }
 
-String readZeroTerminatedString(
+String readZeroTerminatingString(
   List<int> buffer,
   Cursor cursor, [
   Encoding encoding = utf8,

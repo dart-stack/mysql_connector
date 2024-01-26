@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/packet.dart';
-import 'package:mysql_connector/src/resultset.dart';
 import 'package:mysql_connector/src/utils.dart';
 
 // TODO: adopt `Codec` of `dart:convert`
