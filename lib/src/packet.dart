@@ -254,8 +254,8 @@ Map<String, dynamic> readLocalInfilePacket(List<int> buffer, [Cursor? cursor]) {
 
   final props = <String, dynamic>{};
 
-  cursor.increase(4);
-  cursor.increase(1);
+  cursor.increment(4);
+  cursor.increment(1);
   props["filename"] =
       readString(buffer, cursor, buffer.length - cursor.position);
 
@@ -278,7 +278,7 @@ class OkPacket {
     cursor ??= Cursor.zero();
     final props = <String, dynamic>{};
 
-    cursor.increase(standardPacketHeaderLength + 1);
+    cursor.increment(standardPacketHeaderLength + 1);
     props[fieldAffectedRows] = readLengthEncodedInteger(buffer, cursor);
     props[fieldLastInsertId] = readLengthEncodedInteger(buffer, cursor);
     props[fieldServerStatus] = readInteger(buffer, cursor, 2);
@@ -340,7 +340,7 @@ class ErrPacket {
     cursor ??= Cursor.zero();
     final props = <String, dynamic>{};
 
-    cursor.increase(standardPacketHeaderLength + 1);
+    cursor.increment(standardPacketHeaderLength + 1);
     props[fieldErrorCode] = readInteger(buffer, cursor, 2);
     if (props[fieldErrorCode] == 0xffffff) {
       props[fieldStage] = readInteger(buffer, cursor, 1);
@@ -349,7 +349,7 @@ class ErrPacket {
       props[fieldProgressInfo] = readLengthEncodedString(buffer, cursor);
     } else {
       if (buffer[cursor.position] == 35) {
-        cursor.increase(1);
+        cursor.increment(1);
         props[fieldSqlState] = readString(buffer, cursor, 5);
         props[fieldErrorMessage] =
             readString(buffer, cursor, buffer.length - cursor.position);
@@ -414,7 +414,7 @@ class EofPacket {
     cursor ??= Cursor.zero();
     final props = <String, dynamic>{};
 
-    cursor.increase(standardPacketHeaderLength + 1);
+    cursor.increment(standardPacketHeaderLength + 1);
     props[fieldNumWarnings] = readInteger(buffer, cursor, 2);
     props[fieldServerStatus] = readInteger(buffer, cursor, 2);
 

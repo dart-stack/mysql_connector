@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:mysql_connector/src/metrics.dart';
+import 'package:typed_data/typed_data.dart';
+
 import 'compression.dart';
 import 'logging.dart';
 import 'packet.dart';
@@ -17,6 +20,8 @@ abstract interface class PacketSocketReader {
   Cursor get cursor;
 
   AsyncPacketReader get packetReader;
+
+  Stream<List<int>> get packets;
 
   Future<Uint8List> read(int length);
 
@@ -34,9 +39,9 @@ class PacketSocket implements PacketSocketReader {
 
   final SessionState _session;
 
-  final _StatCollector _statCollector;
+  final _MetricsCollector _metricsCollector;
 
-  final _PacketReceiver _packetReceiver;
+  final _NetworkPacketReceiver _receiver;
 
   final Socket _rawSocket;
 
@@ -49,8 +54,8 @@ class PacketSocket implements PacketSocketReader {
     this._packetCompressor,
     this._sequenceManager,
     this._session,
-    this._statCollector,
-    this._packetReceiver,
+    this._metricsCollector,
+    this._receiver,
     this._rawSocket,
   ) {
     _subscription = _rawSocket.listen(
@@ -69,20 +74,20 @@ class PacketSocket implements PacketSocketReader {
     required Socket rawSocket,
     required int receiveBufferSize,
   }) {
-    final statCollector = _StatCollector(true);
+    final metricsCollector = _MetricsCollector();
 
     return PacketSocket._internal(
       logger,
       packetCompressor,
       sequenceManager,
       session,
-      statCollector,
-      _PacketReceiver(
+      metricsCollector,
+      _NetworkPacketReceiver(
         logger,
         session,
         packetCompressor,
         sequenceManager,
-        statCollector,
+        metricsCollector,
         receiveBufferSize,
       ),
       rawSocket,
@@ -94,7 +99,7 @@ class PacketSocket implements PacketSocketReader {
   bool get compressionEnabled => _session.compressionEnabled;
 
   @override
-  List<int> get buffer => _packetReceiver.packetBuffer;
+  List<int> get buffer => _receiver.packetBuffer;
 
   @override
   Cursor get cursor => _cursor;
@@ -102,12 +107,15 @@ class PacketSocket implements PacketSocketReader {
   @override
   AsyncPacketReader get packetReader => _AsyncPacketReader(this);
 
+  @override
+  Stream<List<int>> get packets => _receiver.packets;
+
   void _onData(List<int> data) {
-    _packetReceiver.onData(data);
+    _receiver.onData(data);
   }
 
   void _onDone() {
-    _packetReceiver.onDone();
+    _receiver.onDone();
     print("socket is closed");
   }
 
@@ -122,7 +130,7 @@ class PacketSocket implements PacketSocketReader {
 
   @override
   void gc() {
-    _packetReceiver.release();
+    _receiver.release();
     _cursor.reset();
   }
 
@@ -141,14 +149,14 @@ class PacketSocket implements PacketSocketReader {
 
     final completer = Completer.sync();
 
-    _packetReceiver.onPacketReceived(() {
+    _receiver.onPacketReceived(() {
       if (_availableToReadNextPacket()) {
         completer.complete();
         return true;
       }
       return false;
     });
-    _packetReceiver.processUnread();
+    _receiver.processUnread();
 
     await completer.future;
   }
@@ -162,7 +170,7 @@ class PacketSocket implements PacketSocketReader {
     final end = cursor.position + standardPacketHeaderLength + payloadLength;
     final packet = getRangeEfficiently(buffer, start, end);
 
-    cursor.increase(standardPacketHeaderLength + payloadLength);
+    cursor.increment(standardPacketHeaderLength + payloadLength);
     return packet;
   }
 
@@ -254,7 +262,7 @@ class PacketSocket implements PacketSocketReader {
 
 enum _ReadState { readHeader, readPayload }
 
-class _PacketReceiver {
+class _NetworkPacketReceiver {
   final Logger _logger;
 
   final SessionState _session;
@@ -263,7 +271,7 @@ class _PacketReceiver {
 
   final PacketSequenceManager _sequenceManager;
 
-  final _StatCollector _statCollector;
+  final _MetricsCollector _metricsCollector;
 
   final int _maxBufferSize;
 
@@ -287,12 +295,14 @@ class _PacketReceiver {
 
   int _payloadLength = 0;
 
-  _PacketReceiver(
+  final StreamController<List<int>> _packetStream = StreamController();
+
+  _NetworkPacketReceiver(
     this._logger,
     this._session,
     this._packetCompressor,
     this._sequenceManager,
-    this._statCollector,
+    this._metricsCollector,
     this._maxBufferSize,
   );
 
@@ -300,15 +310,20 @@ class _PacketReceiver {
 
   Uint8List get packetBuffer => _packetBuffer;
 
+  Stream<List<int>> get packets => _packetStream.stream;
+
   void onData(List<int> data) async {
     _writeToUnreadBuffer(data);
+    _metricsCollector.incrementReceivedBytes(data.length);
     _logger.verbose(
         "${data.length} bytes has been received and written to unread buffer (bufferSize=${_unreadBuffer.length}, written=${data.length})");
 
     processUnread();
   }
 
-  void onDone() {}
+  void onDone() async {
+    await _packetStream.close();
+  }
 
   void _writeToUnreadBuffer(List<int> buffer) {
     _unreadBuffer.addAll(buffer);
@@ -317,10 +332,6 @@ class _PacketReceiver {
   void _writeToPacketBuffer(List<int> data) {
     _packetBufferWriter.add(data);
     _packetBuffer = _packetBufferWriter.toBytes();
-
-    if (_statCollector.enabled) {
-      _statCollector.increaseBufferedPackets(countStandardPackets(data));
-    }
   }
 
   void _releasePacketBuffer() {
@@ -404,9 +415,8 @@ class _PacketReceiver {
               final decompressed = _packetCompressor.decompress(buffer);
               _writeToPacketBuffer(decompressed);
               _trackStandardPacketSequence(decompressed);
-              if (_statCollector.enabled) {
-                _statCollector.increaseReceivedPackets();
-              }
+              _writeToPacketStream();
+              _metricsCollector.incrementReceivedPackets(1);
 
               _flushOnPacketReceivedCallbacks();
               _readState = _ReadState.readHeader;
@@ -425,6 +435,7 @@ class _PacketReceiver {
               _bufferedHeaderLength = standardPacketHeaderLength;
               _payloadLength = _getPayloadLength(bufferedHeader);
               _bufferedPacketWriter.add(bufferedHeader);
+              _writeToPacketStream();
 
               _unreadOffset += standardPacketHeaderLength;
               _readState = _ReadState.readPayload;
@@ -444,9 +455,8 @@ class _PacketReceiver {
               final buffer = _bufferedPacketWriter.takeBytes();
               _writeToPacketBuffer(buffer);
               _trackStandardPacketSequence(buffer);
-              if (_statCollector.enabled) {
-                _statCollector.increaseReceivedPackets();
-              }
+              _writeToPacketStream();
+              _metricsCollector.incrementReceivedPackets(1);
 
               _flushOnPacketReceivedCallbacks();
               _readState = _ReadState.readHeader;
@@ -456,6 +466,16 @@ class _PacketReceiver {
     }
 
     _lock.release();
+  }
+
+  void _streamPacket(List<int> packet) {
+    _packetStream.add(packet);
+  }
+
+  void _writeToPacketStream() {
+    for (final range in IterableStandardPacketRanges(_packetBuffer)) {
+      _streamPacket(getRangeEfficiently(_packetBuffer, range.$1, range.$2));
+    }
   }
 
   void _flushOnPacketReceivedCallbacks() {
@@ -473,30 +493,39 @@ class _PacketReceiver {
   }
 }
 
-class _StatCollector {
-  final bool enabled;
+class _MetricsCollector implements MetricsCollector {
+  int _receivedBytes = 0;
 
-  int _bufferedPackets = 0;
+  int _sentBytes = 0;
 
   int _receivedPackets = 0;
 
-  _StatCollector(this.enabled);
+  _MetricsCollector();
 
-  int get bufferedPackets => _bufferedPackets;
+  int get receivedBytes => _receivedBytes;
+
+  int get sentBytes => _sentBytes;
 
   int get receivedPackets => _receivedPackets;
 
-  void increaseBufferedPackets([int delta = 1]) {
-    _bufferedPackets += delta;
+  @override
+  void incrementReceivedBytes(int delta) {
+    _receivedBytes += delta;
   }
 
-  void increaseReceivedPackets([int delta = 1]) {
+  @override
+  void incrementSentBytes(int delta) {
+    _sentBytes += delta;
+  }
+
+  @override
+  void incrementReceivedPackets(int delta) {
     _receivedPackets += delta;
   }
 
   @override
   String toString() {
-    return "receivedPackets = $receivedPackets, bufferedPackets = $bufferedPackets";
+    return "receivedBytes=$receivedBytes, sentBytes=$sentBytes, receivedPackets=$receivedPackets";
   }
 }
 
@@ -606,5 +635,247 @@ class _AsyncPacketReader implements AsyncPacketReader {
   }
 }
 
-// TODO: Implement fixed-size buffer to optimize the performance of socket
-//  receiving and packet buffering.
+void _memmove(List<int> mem, int from, int to, int length) {
+  assert(mem.length - from >= length);
+  mem.setRange(to, to + length, mem.getRange(from, from + length));
+}
+
+class InboundPacketStreamTransformer
+    extends StreamTransformerBase<List<int>, List<int>> {
+  final SessionState _session;
+
+  final PacketCompressor _compressor;
+
+  final bool _metricsEnabled;
+
+  final MetricsCollector _metricsCollector;
+
+  final int _bufferSize;
+
+  const InboundPacketStreamTransformer(
+    this._session,
+    this._compressor,
+    this._metricsEnabled,
+    this._metricsCollector,
+    this._bufferSize,
+  );
+
+  @override
+  Stream<List<int>> bind(Stream<List<int>> stream) => Stream.eventTransformed(
+        stream,
+        (sink) => _InboundPacketStreamSink(
+          sink,
+          _session,
+          _compressor,
+          _metricsEnabled,
+          _metricsCollector,
+          _bufferSize,
+        ),
+      );
+}
+
+class _InboundPacketStreamSink implements EventSink<List<int>> {
+  final EventSink<List<int>> _outputSink;
+
+  final SessionState _session;
+
+  final PacketCompressor _compressor;
+
+  final bool _metricsEnabled;
+
+  final MetricsCollector _metricsCollector;
+
+  final int _bufferSize;
+
+  final Uint8Buffer _unreadBuffer = Uint8Buffer();
+
+  final Uint8Buffer _packetBuffer = Uint8Buffer();
+
+  _InboundPacketStreamSink(
+    this._outputSink,
+    this._session,
+    this._compressor,
+    this._metricsEnabled,
+    this._metricsCollector,
+    this._bufferSize,
+  );
+
+  @override
+  void add(List<int> event) {
+    _unreadBuffer.addAll(event);
+    _processUnread();
+    _processBufferedPacket();
+  }
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {
+    _outputSink.addError(error, stackTrace);
+  }
+
+  @override
+  void close() {
+    _outputSink.close();
+  }
+
+  bool get _compressionEnabled => _session.compressionEnabled;
+
+  void _processUnread() {
+    if (_compressionEnabled) {
+      int offset = 0;
+      for (;;) {
+        if (_unreadBuffer.length - offset < compressedPacketHeaderLength) {
+          break;
+        }
+        final payloadLength =
+            readInteger(_unreadBuffer, Cursor.from(offset), 3);
+        if (_unreadBuffer.length - offset <
+            compressedPacketHeaderLength + payloadLength) {
+          break;
+        }
+        offset += 4;
+        final uncompressedPayloadLength =
+            readInteger(_unreadBuffer, Cursor.from(offset), 3);
+        offset += 3;
+        final payload = getRangeEfficiently(
+          _unreadBuffer.buffer.asUint8List(),
+          offset,
+          offset + payloadLength,
+        );
+        offset += payloadLength;
+
+        List<int> uncompressedPayload;
+        if (uncompressedPayloadLength == 0) {
+          uncompressedPayload = payload;
+        } else {
+          uncompressedPayload = _compressor.decompress(payload);
+          assert(uncompressedPayload.length == uncompressedPayloadLength);
+        }
+        _packetBuffer.addAll(uncompressedPayload.toUint8List());
+      }
+
+      final remaining = _unreadBuffer.length - offset;
+      _memmove(_unreadBuffer, offset, 0, remaining);
+      _unreadBuffer.length = remaining;
+    } else {
+      _packetBuffer.addAll(_unreadBuffer.buffer.asUint8List());
+      _unreadBuffer.clear();
+    }
+  }
+
+  void _processBufferedPacket() {
+    int offset = 0;
+    for (;;) {
+      if (_packetBuffer.length - offset < standardPacketHeaderLength) {
+        break;
+      }
+      final payloadLength = readInteger(_packetBuffer, Cursor.from(offset), 3);
+      if (_packetBuffer.length - offset <
+          standardPacketHeaderLength + payloadLength) {
+        break;
+      }
+      _outputSink.add(getRangeEfficiently(
+        _packetBuffer.buffer.asUint8List(),
+        offset,
+        offset + standardPacketHeaderLength + payloadLength,
+      ));
+      offset += standardPacketHeaderLength + payloadLength;
+    }
+
+    final remaining = _packetBuffer.length - offset;
+    _memmove(_packetBuffer, offset, 0, remaining);
+    _packetBuffer.length = remaining;
+  }
+}
+
+class OutboundPacketStreamTransformer
+    extends StreamTransformerBase<List<int>, List<int>> {
+  final SessionState _session;
+
+  final PacketCompressor _compressor;
+
+  final bool _metricsEnabled;
+
+  final MetricsCollector _metricsCollector;
+
+  const OutboundPacketStreamTransformer(
+    this._session,
+    this._compressor,
+    this._metricsEnabled,
+    this._metricsCollector,
+  );
+
+  @override
+  Stream<List<int>> bind(Stream<List<int>> stream) => Stream.eventTransformed(
+        stream,
+        (sink) => _OutboundPacketStreamSink(
+          sink,
+          _session,
+          _compressor,
+          _metricsEnabled,
+          _metricsCollector,
+        ),
+      );
+}
+
+class _OutboundPacketStreamSink implements EventSink<List<int>> {
+  final EventSink<List<int>> _outputSink;
+
+  final SessionState _session;
+
+  final PacketCompressor _compressor;
+
+  final bool _metricsEnabled;
+
+  final MetricsCollector _metricsCollector;
+
+  final Uint8Buffer _unsentBuffer = Uint8Buffer();
+
+  final Uint8Buffer _packetBuffer = Uint8Buffer();
+
+  _OutboundPacketStreamSink(
+    this._outputSink,
+    this._session,
+    this._compressor,
+    this._metricsEnabled,
+    this._metricsCollector,
+  );
+
+  @override
+  void add(List<int> event) {
+    _packetBuffer.addAll(event);
+    _processBufferedPacket();
+    _processUnsent();
+  }
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {
+    _outputSink.addError(error, stackTrace);
+  }
+
+  @override
+  void close() {
+    _outputSink.close();
+  }
+
+  void _processBufferedPacket() {
+    if (_session.compressionEnabled) {
+      _unsentBuffer.addAll(_compressor.compress(
+        _packetBuffer.buffer.asUint8List(),
+        0,
+        256,
+        maxPacketSize: _session.maxPacketSize,
+      ));
+    } else {
+      _unsentBuffer.addAll(_packetBuffer.buffer.asUint8List());
+    }
+    _packetBuffer.clear();
+  }
+
+  void _processUnsent() {
+    add(_unsentBuffer.buffer.asUint8List());
+    if (_metricsEnabled) {
+      _metricsCollector.incrementSentBytes(_unsentBuffer.length);
+    }
+    _unsentBuffer.clear();
+  }
+}

@@ -56,7 +56,7 @@ class PacketSequenceManager {
   ]) {
     cursor ??= Cursor.zero();
 
-    final ranges = StandardPacketRangeIterable(buffer, cursor);
+    final ranges = IterableStandardPacketRanges(buffer, cursor);
     for (final range in ranges) {
       _latestStandardPacketSequence =
           buffer[range.$1 + standardPacketSequenceOffset];
@@ -82,7 +82,7 @@ class PacketSequenceManager {
   ]) {
     cursor ??= Cursor.zero();
 
-    final ranges = StandardPacketRangeIterable(buffer, cursor);
+    final ranges = IterableStandardPacketRanges(buffer, cursor);
     for (final range in ranges) {
       buffer[range.$1 + standardPacketSequenceOffset] =
           increaseAndGetStandardPacketSequence();

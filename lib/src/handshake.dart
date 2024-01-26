@@ -161,7 +161,7 @@ class Handshaker {
     final cursor = Cursor.zero();
     final props = <String, dynamic>{};
 
-    cursor.increase(standardPacketHeaderLength);
+    cursor.increment(standardPacketHeaderLength);
 
     props["protocolVersion"] = readInteger(message, cursor, 1);
     props["serverVersion"] = readZeroTerminatingString(message, cursor);
@@ -276,14 +276,14 @@ class Handshaker {
     final cursor = Cursor.zero();
 
     final payloadLength = readInteger(message, cursor, 3);
-    cursor.increase(1);
+    cursor.increment(1);
 
     if (message[cursor.position] != 0xFE) {
       throw AssertionError(
         "Auth Switch Request must with a leading byte 0xFE, but got ${message[cursor.position].toRadixString(16)}",
       );
     }
-    cursor.increase(1); // skip leading byte
+    cursor.increment(1); // skip leading byte
     props["authPluginName"] = readZeroTerminatingString(message, cursor);
     // FIXME: I don't know why there is a '\0' at the end of the packet,
     //  refers to the protocol documentation, that there should be

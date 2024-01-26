@@ -34,18 +34,18 @@ class Cursor {
     _position = position;
   }
 
-  void increase(int delta) {
+  void increment(int delta) {
     _position = _position + delta;
   }
 
-  int increaseAndGet(int delta) {
-    increase(delta);
+  int incrementAndGet(int delta) {
+    increment(delta);
     return position;
   }
 
-  int getAndIncrease(int delta) {
+  int getAndIncrement(int delta) {
     final p = position;
-    increase(delta);
+    increment(delta);
     return p;
   }
 }
@@ -54,7 +54,7 @@ List<int> readBytes(List<int> buffer, Cursor cursor, int length) {
   assert(cursor.position + length <= buffer.length);
 
   final result = buffer.sublist(cursor.position, cursor.position + length);
-  cursor.increase(length);
+  cursor.increment(length);
 
   return result;
 }
@@ -86,7 +86,7 @@ int readInteger(List<int> buffer, Cursor cursor, int length) {
 
 int? readLengthEncodedInteger(List<int> buffer, Cursor cursor) {
   final leadingByte = buffer[cursor.position];
-  cursor.increase(1);
+  cursor.increment(1);
 
   if (leadingByte < 0xFB) {
     return leadingByte;
@@ -135,7 +135,7 @@ String readZeroTerminatingString(
   for (int offset = 0;; offset++) {
     final curr = buffer[cursor.position + offset];
     if (curr == 0x00) {
-      cursor.increase(offset + 1); // note: cursor should stop at after '\0'
+      cursor.increment(offset + 1); // note: cursor should stop at after '\0'
       return encoding.decode(bytes);
     }
 
@@ -195,7 +195,7 @@ int getPacketPayloadLength(List<int> buffer, Cursor cursor) {
 
 List<int> getRangeEfficiently(List<int> buffer, int start, int end) {
   if (buffer is Uint8List) {
-    return Uint8List.sublistView(buffer, start, end);
+    return buffer.sublist(start, end);
   }
   return buffer.sublist(start, end);
 }
@@ -278,7 +278,7 @@ abstract base class _PacketIteratorBase<T> implements Iterator<T> {
       return false;
     }
     _current.setPosition(_cursor.position);
-    _cursor.increase(size);
+    _cursor.increment(size);
     return true;
   }
 }
@@ -307,14 +307,14 @@ final class _PacketIterator extends _PacketIteratorBase<List<int>>
   List<int> get current => getRangeEfficiently(buffer, range.$1, range.$2);
 }
 
-class StandardPacketRangeIterable
+class IterableStandardPacketRanges
     with IterableMixin<(int, int)>
     implements Iterable<(int, int)> {
   final List<int> _buffer;
 
   final Cursor _cursor;
 
-  StandardPacketRangeIterable(List<int> buffer, [Cursor? cursor])
+  IterableStandardPacketRanges(List<int> buffer, [Cursor? cursor])
       : _buffer = buffer,
         _cursor = cursor ?? Cursor.zero();
 

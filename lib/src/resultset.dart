@@ -41,7 +41,7 @@ class ResultSet {
           throw Exception("error!");
 
         default:
-          reader.cursor.increase(-buffer.length);
+          reader.cursor.increment(-buffer.length);
           if (binary) {
             props[fieldRows].add(await ResultSetBinaryRow.fromReader(
               reader,
@@ -111,7 +111,7 @@ class ResultSetColumn {
     final cursor = Cursor.zero();
     final buffer = await reader.readPacket();
 
-    cursor.increase(standardPacketHeaderLength);
+    cursor.increment(standardPacketHeaderLength);
     props[fieldCatalog] = readLengthEncodedString(buffer, cursor);
     props[fieldSchema] = readLengthEncodedString(buffer, cursor);
     props[fieldTableName] = readLengthEncodedString(buffer, cursor);
@@ -186,7 +186,7 @@ class ResultSetTextRow {
     final cursor = Cursor.zero();
     final buffer = await reader.readPacket();
 
-    cursor.increase(standardPacketHeaderLength);
+    cursor.increment(standardPacketHeaderLength);
     props[fieldColumns] = [];
     for (int i = 0; i < numberOfColumns; i++) {
       props[fieldColumns].add(readLengthEncodedString(buffer, cursor));
@@ -221,8 +221,8 @@ class ResultSetBinaryRow {
     final cursor = Cursor.zero();
     final buffer = await reader.readPacket();
 
-    cursor.increase(standardPacketHeaderLength);
-    cursor.increase(1); // discard leading byte
+    cursor.increment(standardPacketHeaderLength);
+    cursor.increment(1); // discard leading byte
     props[fieldNullBitmap] = Bitmap.from(
       readBytes(buffer, cursor, ((numberOfColumns + 9) / 8).floor()),
     );

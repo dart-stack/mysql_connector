@@ -447,7 +447,7 @@ DateTime decodeTime(List<int> buffer, [Cursor? cursor]) {
   }
 
   // TODO: negative time support
-  cursor.increase(1);
+  cursor.increment(1);
 
   final buf = Uint8List(12)
     ..setRange(0, length, readBytes(buffer, cursor, length - 1).toUint8List());

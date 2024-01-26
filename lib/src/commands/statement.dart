@@ -48,7 +48,7 @@ class PrepareStmtResult {
       final cursor = Cursor.zero();
       final buffer = await reader.readPacket();
 
-      cursor.increase(standardPacketHeaderLength);
+      cursor.increment(standardPacketHeaderLength);
       switch (readInteger(buffer, cursor, 1)) {
         case 0x00:
           props[fieldStatementId] = readInteger(buffer, cursor, 4);
@@ -219,7 +219,7 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
 
         default:
           // TODO: handle multiple result sets
-          socketReader.cursor.increase(-buffer.length);
+          socketReader.cursor.increment(-buffer.length);
           final result =
               await ResultSet.fromSocket(socketReader, session, true);
           print("${result.rows.length} rows was fetched");
@@ -264,7 +264,7 @@ final class FetchStmt
             return rows;
 
           default:
-            socketReader.cursor.increase(-buffer.length);
+            socketReader.cursor.increment(-buffer.length);
             rows.add(await ResultSetBinaryRow.fromReader(
               socketReader,
               session,
@@ -309,7 +309,7 @@ final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
             return;
 
           default:
-            socketReader.cursor.increase(-buffer.length);
+            socketReader.cursor.increment(-buffer.length);
             await ResultSetBinaryRow.fromReader(
               socketReader,
               session,

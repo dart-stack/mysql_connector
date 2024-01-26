@@ -6,69 +6,70 @@ import 'utils.dart';
 
 class PacketCompressor {
   List<int> compress(
-    List<int> packets,
+    List<int> buffer,
     int sequence,
     int threshold, {
     int maxPacketSize = 0xffffff,
   }) {
-    assert(maxPacketSize <= 0xffffff, "maxPacketSize is up to 0xffffff");
-
-    if (packets.isEmpty) {
+    assert(maxPacketSize <= 0xffffff);
+    if (buffer.isEmpty) {
       return [0x00, 0x00, 0x00, sequence, 0x00, 0x00, 0x00];
     }
+    final maxPayloadSize = maxPacketSize - compressedPacketHeaderLength;
+    final writer = BytesBuilder();
+    final payloadWriter = BytesBuilder();
+    int offset = 0;
+    for (;;) {
+      if (offset == buffer.length) {
+        break;
+      }
+      final payloadLength = readInteger(buffer, Cursor.from(offset), 3);
+      assert(payloadLength <= 0xffffff);
 
-    final cursor = Cursor.zero();
-    final bufferWriter = BytesBuilder();
-
-    var available = maxPacketSize;
-    var payload = <int>[];
-
-    void packAndClear() {
-      if (payload.isNotEmpty) {
-        if (payload.length < threshold) {
-          writeInteger(bufferWriter, 3, payload.length);
-          writeInteger(bufferWriter, 1, sequence++);
-          writeInteger(bufferWriter, 3, 0);
-          writeBytes(bufferWriter, payload);
-        } else {
-          final uncompressedLen = payload.length;
-          final compressed = zlib.encode(payload);
-
-          writeInteger(bufferWriter, 3, compressed.length);
-          writeInteger(bufferWriter, 1, sequence++);
-          writeInteger(bufferWriter, 3, uncompressedLen);
-          writeBytes(bufferWriter, compressed);
+      int remaining = standardPacketHeaderLength + payloadLength;
+      for (;;) {
+        if (remaining == 0) {
+          break;
         }
-
-        available = maxPacketSize;
-        payload.clear();
+        final payloadRemaining = maxPayloadSize - payloadWriter.length;
+        if (payloadRemaining == 0) {
+          _compressAndPack(
+              writer, sequence++, payloadWriter.takeBytes(), threshold);
+        } else if (remaining > payloadRemaining) {
+          payloadWriter.add(
+              getRangeEfficiently(buffer, offset, offset + payloadRemaining));
+          _compressAndPack(
+              writer, sequence++, payloadWriter.takeBytes(), threshold);
+          offset += payloadRemaining;
+          remaining -= payloadRemaining;
+        } else {
+          payloadWriter
+              .add(getRangeEfficiently(buffer, offset, offset + remaining));
+          offset += remaining;
+          remaining = 0;
+        }
       }
     }
+    if (payloadWriter.length > 0) {
+      _compressAndPack(
+          writer, sequence++, payloadWriter.takeBytes(), threshold);
+    }
+    return writer.takeBytes();
+  }
 
-    for (;;) {
-      assert(cursor.position <= packets.length, "cursor is out of range");
-
-      if (cursor.position == packets.length) {
-        if (payload.isNotEmpty) {
-          packAndClear();
-        }
-
-        return bufferWriter.takeBytes();
-      }
-
-      assert(
-        packets.length >= cursor.position + standardPacketHeaderLength,
-        "invalid standard packet length",
-      );
-
-      var len = readInteger(packets, cursor.clone(), 3);
-      if ((len + standardPacketHeaderLength) > available) {
-        packAndClear();
-      }
-
-      payload
-          .addAll(readBytes(packets, cursor, len + standardPacketHeaderLength));
-      available -= len + standardPacketHeaderLength;
+  void _compressAndPack(
+      BytesBuilder writer, int sequence, List<int> payload, int threshold) {
+    if (payload.length > threshold) {
+      final compressedPayload = zlib.encode(payload);
+      writeInteger(writer, 3, compressedPayload.length);
+      writeInteger(writer, 1, sequence);
+      writeInteger(writer, 3, payload.length);
+      writeBytes(writer, compressedPayload);
+    } else {
+      writeInteger(writer, 3, payload.length);
+      writeInteger(writer, 1, sequence);
+      writeInteger(writer, 3, 0);
+      writeBytes(writer, payload);
     }
   }
 
@@ -109,7 +110,7 @@ class PacketCompressor {
         writer.add(decompressed);
       }
 
-      cursor.increase(compressedLength);
+      cursor.increment(compressedLength);
     }
   }
 }

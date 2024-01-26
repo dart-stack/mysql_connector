@@ -77,7 +77,7 @@ final class Query extends CommandBase<QueryParams, dynamic> {
         }
 
       default:
-        socketReader.cursor.increase(-packet.length);
+        socketReader.cursor.increment(-packet.length);
         final result = await ResultSet.fromSocket(socketReader, session, false);
         print("${result.rows.length} rows was fetched");
         return result;

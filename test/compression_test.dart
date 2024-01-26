@@ -83,7 +83,7 @@ void main() {
 
         expect(
           compressor.compress(packets, 0, 0),
-          orderedEquals([
+          equals([
             l1, 0x00, 0x00, 0, 7, 0x00, 0x00, // compressed packet header
             ...p1 //
           ]),
@@ -159,7 +159,7 @@ void main() {
         ]);
 
         expect(
-          compressor.compress(packets, 0, 0xffffffff, maxPacketSize: 5),
+          compressor.compress(packets, 0, 0xffffffff, maxPacketSize: 12),
           orderedEquals([
             5, 0x00, 0x00, 0, 0, 0x00, 0x00, // compressed packet #1
             1, 0x00, 0x00, 0, 0x00,
