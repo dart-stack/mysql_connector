@@ -214,6 +214,7 @@ class PacketBuilder {
           // Note: once the length of last packet's payload reaches 0xffffff,
           //  it is required to append an empty packet to indicate the packet
           //  is terminated.
+          // See https://mariadb.com/kb/en/0-packet/#packet-splitting
           if (appendEmptyPacket) {
             packetBuffer.add(const [0x00, 0x00, 0x00]);
             packetBuffer.addByte(sequence++);
@@ -235,7 +236,6 @@ class PacketBuilder {
           appendEmptyPacket = false;
         }
         // reset sequence if sequence is exceeded.
-        // see https://mariadb.com/kb/en/0-packet/#packet-splitting
         if (sequence == 0xff + 1) {
           sequence = 0;
         }
