@@ -17,6 +17,12 @@ void main(List<String> args) {
       buffer.toBytes();
     }, iterations: 10000);
 
+    benchmark(".add() & .takeBytes() (16KB)", () {
+      final buffer = BytesBuilder(copy: false);
+      buffer.add(testData16KBytes);
+      buffer.takeBytes();
+    }, iterations: 10000);
+
     benchmark(".add() (32KB)", () {
       final buffer = BytesBuilder(copy: false);
       buffer.add(testData32KBytes);
@@ -28,6 +34,12 @@ void main(List<String> args) {
       buffer.toBytes();
     }, iterations: 10000);
 
+    benchmark(".add() & .takeBytes() (32KB)", () {
+      final buffer = BytesBuilder(copy: false);
+      buffer.add(testData32KBytes);
+      buffer.takeBytes();
+    }, iterations: 10000);
+
     benchmark(".add() (64KB)", () {
       final buffer = BytesBuilder(copy: false);
       buffer.add(testData64KBytes);
@@ -37,6 +49,12 @@ void main(List<String> args) {
       final buffer = BytesBuilder(copy: false);
       buffer.add(testData64KBytes);
       buffer.toBytes();
+    }, iterations: 10000);
+
+    benchmark(".add() & .takeBytes() (64KB)", () {
+      final buffer = BytesBuilder(copy: false);
+      buffer.add(testData64KBytes);
+      buffer.takeBytes();
     }, iterations: 10000);
   });
 
@@ -52,6 +70,12 @@ void main(List<String> args) {
       buffer.toBytes();
     }, iterations: 10000);
 
+    benchmark(".add() & .takeBytes() (16KB)", () {
+      final buffer = BytesBuilder(copy: true);
+      buffer.add(testData16KBytes);
+      buffer.takeBytes();
+    }, iterations: 10000);
+
     benchmark(".add() (32KB)", () {
       final buffer = BytesBuilder(copy: true);
       buffer.add(testData32KBytes);
@@ -63,6 +87,12 @@ void main(List<String> args) {
       buffer.toBytes();
     }, iterations: 10000);
 
+    benchmark(".add() & .takeBytes() (32KB)", () {
+      final buffer = BytesBuilder(copy: true);
+      buffer.add(testData32KBytes);
+      buffer.takeBytes();
+    }, iterations: 10000);
+
     benchmark(".add() (64KB)", () {
       final buffer = BytesBuilder(copy: true);
       buffer.add(testData64KBytes);
@@ -72,6 +102,12 @@ void main(List<String> args) {
       final buffer = BytesBuilder(copy: true);
       buffer.add(testData64KBytes);
       buffer.toBytes();
+    }, iterations: 10000);
+
+    benchmark(".add() & .takeBytes() (64KB)", () {
+      final buffer = BytesBuilder(copy: true);
+      buffer.add(testData64KBytes);
+      buffer.takeBytes();
     }, iterations: 10000);
   });
 }
