@@ -383,10 +383,6 @@ List<int> encodeTimeForBinary(
   return writer.takeBytes();
 }
 
-// ----------------------
-//  Binary data decoders
-// ----------------------
-
 double decodeDecimalForBinary(List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
 
@@ -537,19 +533,6 @@ DateTime decodeTimeForBinary(List<int> buffer, [Cursor? cursor]) {
   );
 }
 
-Bitmap? decodeBits(List<int> buffer, [Cursor? cursor]) {
-  cursor ??= Cursor.zero();
-  final data = readLengthEncodedBytes(buffer, cursor);
-  if(data == null) {
-    return null;
-  }
-  return Bitmap.from(data);
-}
-
-// ----------------------
-//  Text data decoders
-// ----------------------
-
 double? decodeDoubleForText(List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
   final doubleInText = readLengthEncodedString(buffer, cursor);
@@ -644,6 +627,15 @@ DateTime? decodeDateTimeForText(List<int> buffer, [Cursor? cursor]) {
   );
 }
 
+Bitmap? decodeBits(List<int> buffer, [Cursor? cursor]) {
+  cursor ??= Cursor.zero();
+  final data = readLengthEncodedBytes(buffer, cursor);
+  if(data == null) {
+    return null;
+  }
+  return Bitmap.from(data);
+}
+
 dynamic decodeGeometry(List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
   final data = readLengthEncodedBytes(buffer, cursor);
@@ -718,6 +710,7 @@ MysqlType _findBestMatchingMysqlType(dynamic value) {
   throw UnsupportedError(
       "unsupported dart type ${value.runtimeType} to find best matching mysql type");
 }
+
 
 class MysqlTypedValue {
   final MysqlType mysqlType;

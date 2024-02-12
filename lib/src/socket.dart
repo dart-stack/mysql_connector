@@ -18,7 +18,6 @@ abstract interface class SocketWriter {
 abstract interface class PacketWriter {
   void writePacket(List<int> buffer);
 
-  // TODO: this naming seems not accurate
   void writePacketWithBuilder(PacketBuilder builder);
 }
 
@@ -35,9 +34,9 @@ class PacketSocket implements SocketWriter, PacketWriter {
 
   final Socket _rawSocket;
 
-  late StreamController<List<int>> _readChannel;
+  late StreamController<List<int>> _packetReadChannel;
 
-  late StreamController<List<int>> _writeChannel;
+  late StreamController<List<int>> _packetWriteChannel;
 
   late StreamSubscription _writeSubscription;
 
@@ -67,9 +66,9 @@ class PacketSocket implements SocketWriter, PacketWriter {
     this._metricsCollector,
     this._rawSocket,
   ) {
-    _readChannel = StreamController();
-    _writeChannel = StreamController();
-    _writeSubscription = _writeChannel.stream
+    _packetReadChannel = StreamController();
+    _packetWriteChannel = StreamController();
+    _writeSubscription = _packetWriteChannel.stream
         .transform(OutboundPacketStreamTransformer(
           _negotiationState,
           _sequenceManager,
@@ -86,7 +85,7 @@ class PacketSocket implements SocketWriter, PacketWriter {
   }
 
   Stream<List<int>> get stream =>
-      _readChannel.stream.transform(InboundPacketStreamTransformer(
+      _packetReadChannel.stream.transform(InboundPacketStreamTransformer(
         _negotiationState,
         _sequenceManager,
         _metricsEnabled,
@@ -95,18 +94,18 @@ class PacketSocket implements SocketWriter, PacketWriter {
       ));
 
   void _onSocketReceived(List<int> event) {
-    _readChannel.add(event);
+    _packetReadChannel.add(event);
   }
 
   void _onSocketDone() {
-    _readChannel.close();
-    _writeChannel.close();
+    _packetReadChannel.close();
+    _packetWriteChannel.close();
     _logger.info("socket was closed");
   }
 
   void _onSocketError(Object error, [StackTrace? stackTrace]) {
-    _readChannel.addError(error, stackTrace);
-    _writeChannel.addError(error, stackTrace);
+    _packetReadChannel.addError(error, stackTrace);
+    _packetWriteChannel.addError(error, stackTrace);
     _logger.warn(error);
   }
 
@@ -118,7 +117,7 @@ class PacketSocket implements SocketWriter, PacketWriter {
 
   @override
   void writePacket(List<int> buffer) {
-    _writeChannel.add(buffer);
+    _packetWriteChannel.add(buffer);
   }
 
   @override

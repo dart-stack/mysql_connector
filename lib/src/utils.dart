@@ -363,11 +363,13 @@ class Bitmap {
 
   List<int> get buffer => UnmodifiableUint8ListView(_bitmap);
 
-  bool at(int offset) {
-    final i = (offset / 8).floor();
-    final j = offset % 8;
+  bool at(int index) {
+    final i = (index / 8).floor();
+    final j = index % 8;
     return (_bitmap[i] & (1 << j)) > 0;
   }
+
+  bool operator [](int index) => at(index);
 
   @override
   String toString() {
@@ -383,9 +385,17 @@ int getPacketPayloadLength(List<int> buffer, Cursor cursor) {
 }
 
 List<int> getUnmodifiableRangeEfficiently(
-    List<int> buffer, int start, int end) {
+  List<int> buffer,
+  int start,
+  int end, {
+  bool copy = true,
+}) {
   if (buffer is Uint8List) {
-    return buffer.sublist(start, end);
+    if (copy) {
+      return buffer.sublist(start, end);
+    } else {
+      return Uint8List.sublistView(buffer, start, end);
+    }
   }
   return buffer.sublist(start, end);
 }

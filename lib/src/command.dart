@@ -18,12 +18,12 @@ abstract interface class CommandContext {
   void sendPacket(PacketBuilder commands);
 }
 
-abstract base class _CommandBase {
+abstract base class CommandBaseAlt {
   final CommandContext _context;
 
   PacketStreamReader? _reader;
 
-  _CommandBase(this._context);
+  CommandBaseAlt(this._context);
 
   NegotiationState get negotiationState => _context.negotiationState;
 
@@ -46,7 +46,7 @@ abstract base class _CommandBase {
   }
 }
 
-abstract base class CommandBase<P, T> extends _CommandBase {
+abstract base class CommandBase<P, T> extends CommandBaseAlt {
   CommandBase(CommandContext context) : super(context);
 
   Future<T> execute(P params);

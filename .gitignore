@@ -7,3 +7,5 @@
 pubspec.lock
 
 test/spikes
+
+generated/
