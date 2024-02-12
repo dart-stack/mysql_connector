@@ -9,20 +9,20 @@ final class SetOption extends CommandBase<SetOptionParams, void> {
 
   @override
   Future<void> execute(SetOptionParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x1B)
           ..addInteger(2, params.enableMultiStatements ? 0 : 1)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
-      final packet = await socketReader.readPacket();
+      final packet = await reader.next();
       if (packet[4] == 0xFE) {
         return;
       } else {
-        final err = ErrPacket.from(packet, session);
+        final err = ErrPacket.parse(packet, negotiationState);
         throw MysqlExecutionException(
           err.errorCode,
           err.errorMessage,
@@ -30,7 +30,7 @@ final class SetOption extends CommandBase<SetOptionParams, void> {
         );
       }
     } finally {
-      release();
+      leave();
     }
   }
 }

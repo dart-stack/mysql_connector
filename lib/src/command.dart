@@ -1,14 +1,13 @@
-import 'logging.dart';
 import 'packet.dart';
 import 'session.dart';
 import 'socket.dart';
 
 abstract interface class CommandContext {
-  Logger get logger;
+  NegotiationState get negotiationState;
 
-  SessionState get session;
+  PacketWriter get writer;
 
-  PacketSocketReader get socketReader;
+  PacketStreamReader get reader;
 
   PacketBuilder createPacket();
 
@@ -16,32 +15,30 @@ abstract interface class CommandContext {
 
   void endCommand();
 
-  void sendCommand(List<PacketBuilder> commands);
+  void sendPacket(PacketBuilder commands);
 }
 
 abstract base class _CommandBase {
   final CommandContext _context;
 
+  PacketStreamReader? _reader;
+
   _CommandBase(this._context);
 
-  Logger get logger => _context.logger;
+  NegotiationState get negotiationState => _context.negotiationState;
 
-  SessionState get session => _context.session;
+  PacketStreamReader get reader => _context.reader;
 
-  PacketSocketReader get socketReader => _context.socketReader;
-
-  AsyncPacketReader get packetReader => socketReader.packetReader;
-
-  Future<void> acquire() async {
+  Future<void> enter() async {
     await _context.beginCommand();
   }
 
-  void release() {
+  void leave() {
     _context.endCommand();
   }
 
-  void sendCommand(List<PacketBuilder> commands) {
-    _context.sendCommand(commands);
+  void sendPacket(PacketBuilder builder) {
+    _context.sendPacket(builder);
   }
 
   PacketBuilder createPacket() {

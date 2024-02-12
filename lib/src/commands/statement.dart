@@ -2,10 +2,10 @@ import 'dart:typed_data';
 
 import 'package:mysql_connector/src/common.dart';
 import 'package:mysql_connector/src/command.dart';
+import 'package:mysql_connector/src/logging.dart';
 import 'package:mysql_connector/src/packet.dart';
 import 'package:mysql_connector/src/resultset.dart';
 import 'package:mysql_connector/src/session.dart';
-import 'package:mysql_connector/src/socket.dart';
 import 'package:mysql_connector/src/utils.dart';
 
 typedef PrepareStmtParams = ({String sqlStatement});
@@ -16,17 +16,15 @@ final class PrepareStmt
 
   @override
   Future<PrepareStmtResult> execute(PrepareStmtParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
-        createPacket()
-          ..addByte(0x16)
-          ..addString(params.sqlStatement)
-          ..terminated()
-      ]);
-      return await PrepareStmtResult.fromReader(socketReader, session);
+      sendPacket(createPacket()
+        ..addByte(0x16)
+        ..addString(params.sqlStatement)
+        ..terminate());
+      return await PrepareStmtResult.readAndParse(reader, negotiationState);
     } finally {
-      release();
+      leave();
     }
   }
 }
@@ -38,15 +36,15 @@ class PrepareStmtResult {
   static const fieldColumns = "columns";
   static const fieldPlaceholders = "placeholders";
 
-  static Future<PrepareStmtResult> fromReader(
-    PacketSocketReader reader,
-    SessionState session,
+  static Future<PrepareStmtResult> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
   ) async {
     final props = <String, dynamic>{};
     // process first packet
     {
       final cursor = Cursor.zero();
-      final buffer = await reader.readPacket();
+      final buffer = await reader.next();
 
       cursor.increment(standardPacketHeaderLength);
       switch (readInteger(buffer, cursor, 1)) {
@@ -64,20 +62,20 @@ class PrepareStmtResult {
       props[fieldPlaceholders] = <ResultSetColumn>[];
       for (int i = 0; i < props[fieldNumPlaceholders]; i++) {
         props[fieldPlaceholders]
-            .add(await ResultSetColumn.fromReader(reader, session));
+            .add(await ResultSetColumn.readAndParse(reader, negotiationState));
       }
-      if (!session.hasCapabilities(capClientDeprecateEof)) {
-        await reader.readPacket();
+      if (!negotiationState.hasCapabilities(capClientDeprecateEof)) {
+        await reader.next();
       }
     }
     if (props[fieldNumColumns] > 0) {
       props[fieldColumns] = <ResultSetColumn>[];
       for (int i = 0; i < props[fieldNumColumns]; i++) {
         props[fieldColumns]
-            .add(await ResultSetColumn.fromReader(reader, session));
+            .add(await ResultSetColumn.readAndParse(reader, negotiationState));
       }
-      if (!session.hasCapabilities(capClientDeprecateEof)) {
-        await reader.readPacket();
+      if (!negotiationState.hasCapabilities(capClientDeprecateEof)) {
+        await reader.next();
       }
     }
 
@@ -106,16 +104,14 @@ final class CloseStmt extends CommandBase<CloseStmtParams, void> {
 
   @override
   Future<void> execute(CloseStmtParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
-        createPacket()
-          ..addByte(0x19)
-          ..addInteger(4, params.statementId)
-          ..terminated()
-      ]);
+      sendPacket(createPacket()
+        ..addByte(0x19)
+        ..addInteger(4, params.statementId)
+        ..terminate());
     } finally {
-      release();
+      leave();
     }
   }
 }
@@ -123,36 +119,36 @@ final class CloseStmt extends CommandBase<CloseStmtParams, void> {
 typedef ResetStmtParams = ({int statementId});
 
 final class ResetStmt extends CommandBase<ResetStmtParams, void> {
+  final Logger _logger = LoggerFactory.createLogger(name: "ResetStmt");
+
   ResetStmt(CommandContext context) : super(context);
 
   @override
   Future<void> execute(ResetStmtParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
-        createPacket()
-          ..addByte(0x1A)
-          ..addInteger(4, params.statementId)
-          ..terminated()
-      ]);
+      sendPacket(createPacket()
+        ..addByte(0x1A)
+        ..addInteger(4, params.statementId)
+        ..terminate());
 
-      final buffer = await socketReader.readPacket();
+      final buffer = await reader.next();
       switch (buffer[4]) {
         case 0x00:
-          final ok = OkPacket.from(buffer, session);
-          logger.debug(ok);
+          final ok = OkPacket.parse(buffer, negotiationState);
+          _logger.debug(ok);
           return;
 
         case 0xff:
-          final err = ErrPacket.from(buffer, session);
-          logger.debug(err);
+          final err = ErrPacket.parse(buffer, negotiationState);
+          _logger.debug(err);
 
           err.throwIfError((error) => MysqlExecutionException(
               error.errorCode, error.errorMessage, error.sqlState));
           return;
       }
     } finally {
-      release();
+      leave();
     }
   }
 }
@@ -170,11 +166,13 @@ typedef ExecuteStmtParams = ({
 });
 
 final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
+  final Logger _logger = LoggerFactory.createLogger(name: "ExecuteStmt");
+
   ExecuteStmt(CommandContext context) : super(context);
 
   @override
   Future<dynamic> execute(ExecuteStmtParams params) async {
-    await acquire();
+    await enter();
     try {
       final command = createPacket()
         ..addByte(0x17)
@@ -199,19 +197,19 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
         }
         command.addBytes(writer.takeBytes());
       }
-      command.terminated();
-      sendCommand([command]);
+      command.terminate();
+      sendPacket(command);
 
-      final buffer = await socketReader.readPacket();
+      final buffer = await reader.next();
       switch (buffer[4]) {
         case 0x00:
-          final ok = OkPacket.from(buffer, session);
-          logger.debug(ok);
+          final ok = OkPacket.parse(buffer, negotiationState);
+          _logger.debug(ok);
           return;
 
         case 0xff:
-          final err = ErrPacket.from(buffer, session);
-          logger.debug(err);
+          final err = ErrPacket.parse(buffer, negotiationState);
+          _logger.debug(err);
 
           err.throwIfError((error) => MysqlExecutionException(
               error.errorCode, error.errorMessage, error.sqlState));
@@ -219,15 +217,14 @@ final class ExecuteStmt extends CommandBase<ExecuteStmtParams, void> {
 
         default:
           // TODO: handle multiple result sets
-          socketReader.cursor.increment(-buffer.length);
-          final result =
-              await ResultSet.fromSocket(socketReader, session, true);
-          print("${result.rows.length} rows was fetched");
+          reader.index -= 1;
+          final result = await ResultSet.readAndParse(reader, negotiationState, true);
+          _logger.debug("${result.rows.length} rows was fetched");
 
           return result;
       }
     } finally {
-      release();
+      leave();
     }
   }
 }
@@ -241,40 +238,42 @@ typedef FetchStmtParams = ({
 
 final class FetchStmt
     extends CommandBase<FetchStmtParams, List<ResultSetBinaryRow>> {
+  final Logger _logger = LoggerFactory.createLogger(name: "FetchStmt");
+
   FetchStmt(CommandContext context) : super(context);
 
   @override
   Future<List<ResultSetBinaryRow>> execute(FetchStmtParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x17)
           ..addInteger(4, params.statementId)
           ..addInteger(4, params.rowsToFetch)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
       final rows = <ResultSetBinaryRow>[];
       for (int i = 0;; i++) {
-        final buffer = await socketReader.readPacket();
+        final buffer = await reader.next();
         switch (buffer[4]) {
           case 0xFE:
-            logger.debug("$i rows was fetched");
+            _logger.debug("$i rows was fetched");
             return rows;
 
           default:
-            socketReader.cursor.increment(-buffer.length);
-            rows.add(await ResultSetBinaryRow.fromReader(
-              socketReader,
-              session,
+            reader.index -= 1;
+            rows.add(await ResultSetBinaryRow.readAndParse(
+              reader,
+              negotiationState,
               params.numberOfColumns,
               params.columns,
             ));
         }
       }
     } finally {
-      release();
+      leave();
     }
   }
 }
@@ -287,39 +286,41 @@ typedef SendLongDataStmtParams = ({
 });
 
 final class SendLongDataStmt extends CommandBase<SendLongDataStmtParams, void> {
+  final Logger _logger = LoggerFactory.createLogger(name: "SendLongDataStmt");
+
   SendLongDataStmt(CommandContext context) : super(context);
 
   @override
   Future<void> execute(SendLongDataStmtParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x17)
           ..addInteger(4, params.statementId)
           ..addInteger(4, params.parameter)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
       for (int i = 0;; i++) {
-        final buffer = await socketReader.readPacket();
+        final buffer = await reader.next();
         switch (buffer[4]) {
           case 0xFE:
-            logger.debug("$i rows was fetched");
+            _logger.debug("$i rows was fetched");
             return;
 
           default:
-            socketReader.cursor.increment(-buffer.length);
-            await ResultSetBinaryRow.fromReader(
-              socketReader,
-              session,
+            reader.index -= 1;
+            await ResultSetBinaryRow.readAndParse(
+              reader,
+              negotiationState,
               params.numberOfColumns,
               params.columns,
             );
         }
       }
     } finally {
-      release();
+      leave();
     }
   }
 }

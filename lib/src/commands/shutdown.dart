@@ -7,17 +7,17 @@ final class Shutdown extends CommandBase<ShutdownParams, void> {
 
   @override
   Future<void> execute(ShutdownParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x0A)
           ..addByte(0x00)
-          ..terminated(),
-      ]);
-      await socketReader.readPacket();
+          ..terminate(),
+      );
+      await reader.next();
     } finally {
-      release();
+      leave();
     }
   }
 }

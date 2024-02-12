@@ -1,101 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:mysql_connector/src/common.dart';
-import 'package:mysql_connector/src/session.dart';
-import 'package:mysql_connector/src/socket.dart';
+import 'package:mysql_connector/src/lock.dart';
+import 'package:mysql_connector/src/logging.dart';
 
+import 'common.dart';
+import 'datatype.dart';
+import 'session.dart';
 import 'utils.dart';
-
-void writeBytes(BytesBuilder writer, List<int> value) {
-  writer.add(value.toUint8List());
-}
-
-void writeInteger(BytesBuilder writer, int length, int value) {
-  for (int i = 0; i < length; i++) {
-    writer.addByte((value >> (i * 8)) & 0xff);
-  }
-}
-
-void writeLengthEncodedInteger(BytesBuilder writer, int? value) {
-  if (value == null) {
-    writer.addByte(0xFB);
-    return;
-  }
-  if (value < 0xfb) {
-    writer.addByte(value);
-  } else if (value <= 0xffff) {
-    writer.addByte(0xFC);
-    writer.addByte(value & 0xff);
-    writer.addByte((value >> 8) & 0xff);
-  } else if (value <= 0xffffff) {
-    writer.addByte(0xFD);
-    writer.addByte(value & 0xff);
-    writer.addByte((value >> 8) & 0xff);
-    writer.addByte((value >> 16) & 0xff);
-  } else {
-    writer.addByte(0xFE);
-    writer.addByte(value & 0xff);
-    writer.addByte((value >> 8) & 0xff);
-    writer.addByte((value >> 16) & 0xff);
-    writer.addByte((value >> 24) & 0xff);
-    writer.addByte((value >> 32) & 0xff);
-    writer.addByte((value >> 40) & 0xff);
-    writer.addByte((value >> 48) & 0xff);
-    writer.addByte((value >> 56) & 0xff);
-  }
-}
-
-void writeLengthEncodedBytes(BytesBuilder writer, List<int> value) {
-  writeLengthEncodedInteger(writer, value.length);
-  writeBytes(writer, value);
-}
-
-void writeZeroTerminatingBytes(
-  BytesBuilder writer,
-  List<int> value, {
-  bool escape = false,
-}) {
-  final escapingSubstitution = const {
-    0x00: [0x5c, 0x00],
-  };
-  if (escape) {
-    writer.add(
-        value.expand((byte) => escapingSubstitution[byte] ?? [byte]).toList());
-  } else {
-    writer.add(value);
-  }
-  writer.addByte(0x00);
-}
-
-void writeString(
-  BytesBuilder writer,
-  String value, [
-  Encoding encoding = utf8,
-]) {
-  writeBytes(writer, encoding.encode(value));
-}
-
-void writeZeroTerminatingString(
-  BytesBuilder writer,
-  String value, [
-  Encoding encoding = utf8,
-]) {
-  writeZeroTerminatingBytes(writer, encoding.encode(value));
-}
-
-void writeLengthEncodedString(
-  BytesBuilder writer,
-  String? value, [
-  Encoding encoding = utf8,
-]) {
-  if (value == null) {
-    writeLengthEncodedInteger(writer, null);
-    return;
-  }
-  writeLengthEncodedBytes(writer, encoding.encode(value));
-}
 
 class PacketBuilder {
   final BytesBuilder _payloadWriter = BytesBuilder();
@@ -182,7 +96,7 @@ class PacketBuilder {
     _payloadWriter.addByte(0x00);
   }
 
-  void terminated() {
+  void terminate() {
     final start = _lastTerminatedAt;
     final end = _payloadWriter.length;
     _payloadRanges.add((start, end));
@@ -249,6 +163,87 @@ class PacketBuilder {
   }
 }
 
+typedef _PendingEntry = (int, Completer<List<int>>);
+
+class PacketStreamReader {
+  final Logger _logger = LoggerFactory.createLogger(name: "PacketStreamReader");
+
+  final QueueLock _lock = QueueLock();
+
+  final Stream<List<int>> _stream;
+
+  final List<List<int>> _buffer = [];
+
+  final List<_PendingEntry> _pendings = [];
+
+  late StreamSubscription _subscription;
+
+  int _index = 0;
+
+  PacketStreamReader(this._stream) {
+    _subscription = _stream.listen(
+      _onData,
+      onError: _onError,
+      onDone: _onDone,
+      cancelOnError: true,
+    );
+  }
+
+  void _onData(List<int> packet) async {
+    _buffer.add(packet);
+    _processPendings();
+  }
+
+  void _onError(Object error, [StackTrace? stackTrace]) {
+    _processPendings();
+    for (; _pendings.isNotEmpty;) {
+      final pending = _pendings.removeAt(0);
+      pending.$2.completeError(error, stackTrace);
+    }
+  }
+
+  void _onDone() {
+    _processPendings();
+    for (; _pendings.isNotEmpty;) {
+      final pending = _pendings.removeAt(0);
+      pending.$2.completeError(MysqlConnectionException(
+          "cannot read any more from the stream when the socket was closed"));
+    }
+  }
+
+  bool _processing = false;
+
+  void _processPendings() {
+    if (_processing) {
+      return;
+    }
+    _processing = true;
+    final pendings = _pendings.toList();
+    for (final pending in pendings) {
+      if (_buffer.length > pending.$1) {
+        pending.$2.complete(_buffer[pending.$1]);
+        _pendings.remove(pending);
+      }
+    }
+    _processing = false;
+  }
+
+  int get index => _index;
+
+  set index(int newIndex) {
+    assert(newIndex >= 0);
+    _index = newIndex;
+  }
+
+  Future<List<int>> next() async {
+    final completer = Completer<List<int>>();
+    _pendings.add((_index++, completer));
+    _processPendings();
+
+    return completer.future;
+  }
+}
+
 Map<String, dynamic> readLocalInfilePacket(List<int> buffer, [Cursor? cursor]) {
   cursor ??= Cursor.zero();
 
@@ -262,7 +257,11 @@ Map<String, dynamic> readLocalInfilePacket(List<int> buffer, [Cursor? cursor]) {
   return props;
 }
 
-class OkPacket {
+sealed class Packet {
+  const Packet();
+}
+
+class OkPacket extends Packet {
   static const fieldAffectedRows = "affectedRows";
   static const fieldLastInsertId = "lastInsertId";
   static const fieldServerStatus = "serverStatus";
@@ -270,9 +269,9 @@ class OkPacket {
   static const fieldInfo = "info";
   static const fieldSessionStateInfo = "sessionStateInfo";
 
-  static OkPacket from(
+  static OkPacket parse(
     List<int> buffer,
-    SessionState session, [
+    NegotiationState negotiationState, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -285,7 +284,7 @@ class OkPacket {
     props[fieldNumWarning] = readInteger(buffer, cursor, 2);
     if (cursor.position < buffer.length) {
       props[fieldInfo] = readLengthEncodedString(buffer, cursor);
-      if (session.hasCapabilities(capClientSessionTrack) &&
+      if (negotiationState.hasCapabilities(capClientSessionTrack) &&
           (props[fieldServerStatus] & serverSessionStateChanged) > 0) {
         props[fieldSessionStateInfo] = readLengthEncodedString(buffer, cursor);
       }
@@ -294,11 +293,11 @@ class OkPacket {
     return OkPacket._internal(props);
   }
 
-  static Future<OkPacket> fromSocket(
-    PacketSocketReader reader,
-    SessionState session,
+  static Future<OkPacket> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
   ) async {
-    return from(await reader.readPacket(), session);
+    return parse(await reader.next(), negotiationState);
   }
 
   final Map<String, dynamic> props;
@@ -323,7 +322,7 @@ class OkPacket {
   }
 }
 
-class ErrPacket {
+class ErrPacket extends Packet {
   static const fieldErrorCode = "errorCode";
   static const fieldStage = "stage";
   static const fieldMaxStage = "maxStage";
@@ -332,9 +331,9 @@ class ErrPacket {
   static const fieldSqlState = "sqlState";
   static const fieldErrorMessage = "errorMessage";
 
-  static ErrPacket from(
+  static ErrPacket parse(
     List<int> buffer,
-    SessionState session, [
+    NegotiationState negotiationState, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -362,11 +361,11 @@ class ErrPacket {
     return ErrPacket._internal(props);
   }
 
-  static Future<ErrPacket> fromSocket(
-    PacketSocketReader reader,
-    SessionState session,
+  static Future<ErrPacket> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
   ) async {
-    return from(await reader.readPacket(), session);
+    return parse(await reader.next(), negotiationState);
   }
 
   final Map<String, dynamic> props;
@@ -402,13 +401,13 @@ class ErrPacket {
   }
 }
 
-class EofPacket {
+class EofPacket extends Packet {
   static const fieldNumWarnings = "numWarnings";
   static const fieldServerStatus = "serverStatus";
 
-  static EofPacket from(
+  static EofPacket parse(
     List<int> buffer,
-    SessionState session, [
+    NegotiationState negotiationState, [
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
@@ -421,11 +420,11 @@ class EofPacket {
     return EofPacket._internal(props);
   }
 
-  static Future<EofPacket> fromSocket(
-    PacketSocketReader reader,
-    SessionState session,
+  static Future<EofPacket> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
   ) async {
-    return from(await reader.readPacket(), session);
+    return parse(await reader.next(), negotiationState);
   }
 
   final Map<String, dynamic> props;
@@ -435,6 +434,251 @@ class EofPacket {
   int get numberOfWarnings => props[fieldNumWarnings];
 
   int get serverStatus => props[fieldServerStatus];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
+}
+
+class ResultSet {
+  static const fieldNumColumns = "numColumns";
+  static const fieldColumns = "columns";
+  static const fieldRows = "rows";
+
+  // TODO: Deprecate PacketSocketReader, and use Stream instead.
+  static Future<ResultSet> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
+    bool binary,
+  ) async {
+    final props = <String, dynamic>{};
+
+    props[fieldNumColumns] =
+        readLengthEncodedInteger(await reader.next(), Cursor.from(4))!;
+
+    props[fieldColumns] = <ResultSetColumn>[];
+
+    // TODO: if not (MARIADB_CLIENT_CACHE_METADATA capability set)
+    //  OR (send metadata == 1)
+    for (int i = 0; i < props[fieldNumColumns]; i++) {
+      props[fieldColumns]
+          .add(await ResultSetColumn.readAndParse(reader, negotiationState));
+    }
+    if (!negotiationState.hasCapabilities(capClientDeprecateEof)) {
+      await reader.next();
+    }
+    props[fieldRows] = [];
+    for (int i = 0;; i++) {
+      final buffer = await reader.next();
+      switch (buffer[standardPacketPayloadOffset + 0]) {
+        case 0xFE:
+          return ResultSet._internal(props);
+
+        case 0xFF:
+          throw Exception("error!");
+
+        default:
+          reader.index -= 1;
+          if (binary) {
+            props[fieldRows].add(await ResultSetBinaryRow.readAndParse(
+              reader,
+              negotiationState,
+              props[fieldNumColumns],
+              props[fieldColumns],
+            ));
+          } else {
+            props[fieldRows].add(await ResultSetTextRow.readAndParse(
+              reader,
+              negotiationState,
+              props[fieldNumColumns],
+              props[fieldColumns],
+            ));
+          }
+      }
+    }
+  }
+
+  final Map<String, dynamic> props;
+
+  const ResultSet._internal(this.props);
+
+  int get numberOfColumns => props[fieldNumColumns];
+
+  List<ResultSetColumn> get columns => props[fieldColumns];
+
+  List get rows => props[fieldRows];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
+}
+
+class ResultSetColumn {
+  static const fieldCatalog = "catalog";
+  static const fieldSchema = "schema";
+  static const fieldTableName = "tableName";
+  static const fieldOriginalTableName = "originalTableName";
+  static const fieldFieldName = "fieldName";
+  static const fieldOriginalFieldName = "originalFieldName";
+  static const fieldNumExtendedInfo = "numExtendedInfo";
+  static const fieldExtendedInfo = "extendedInfo";
+  static const fieldExtendedInfoType = "extendedInfoType";
+  static const fieldExtendedInfoValue = "extendedInfoValue";
+  static const fieldLength = "length";
+  static const fieldCharset = "charset";
+  static const fieldMaxColumnSize = "maxColumnSize";
+  static const fieldFieldType = "fieldType";
+  static const fieldDetailFlag = "detailFlag";
+  static const fieldDecimals = "decimals";
+
+  static Future<ResultSetColumn> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
+  ) async {
+    final props = <String, dynamic>{};
+    final cursor = Cursor.zero();
+    final buffer = await reader.next();
+
+    cursor.increment(standardPacketHeaderLength);
+    props[fieldCatalog] = readLengthEncodedString(buffer, cursor);
+    props[fieldSchema] = readLengthEncodedString(buffer, cursor);
+    props[fieldTableName] = readLengthEncodedString(buffer, cursor);
+    props[fieldOriginalTableName] = readLengthEncodedString(buffer, cursor);
+    props[fieldFieldName] = readLengthEncodedString(buffer, cursor);
+    props[fieldOriginalFieldName] = readLengthEncodedString(buffer, cursor);
+    if (negotiationState.hasCapabilities(capMariadbClientExtendedTypeInfo)) {
+      props[fieldNumExtendedInfo] = readLengthEncodedInteger(buffer, cursor);
+      props[fieldExtendedInfo] = <Map<String, dynamic>>[];
+      for (int i = 0; i < props[fieldNumExtendedInfo]; i++) {
+        props[fieldExtendedInfo].add({
+          fieldExtendedInfoType: readInteger(buffer, cursor, 1),
+          fieldExtendedInfoValue: readLengthEncodedString(buffer, cursor),
+        });
+      }
+    }
+    props[fieldLength] = readLengthEncodedInteger(buffer, cursor);
+    props[fieldCharset] = readInteger(buffer, cursor, 2);
+    props[fieldMaxColumnSize] = readInteger(buffer, cursor, 4);
+    props[fieldFieldType] = readInteger(buffer, cursor, 1);
+    props[fieldDetailFlag] = readInteger(buffer, cursor, 2);
+    props[fieldDecimals] = readInteger(buffer, cursor, 1);
+
+    return ResultSetColumn._internal(props);
+  }
+
+  final Map<String, dynamic> props;
+
+  const ResultSetColumn._internal(this.props);
+
+  String get catalog => props[fieldCatalog];
+
+  String get schema => props[fieldSchema];
+
+  String get fieldName => props[fieldFieldName];
+
+  String get originalFieldName => props[fieldOriginalFieldName];
+
+  String get tableName => props[fieldTableName];
+
+  String get originalTableName => props[fieldOriginalTableName];
+
+  int get charset => props[fieldCharset];
+
+  int get fieldType => props[fieldFieldType];
+
+  int get length => props[fieldLength];
+
+  int get decimals => props[fieldDecimals];
+
+  int get detailFlag => props[fieldDetailFlag];
+
+  bool get unsigned => (detailFlag & fieldFlagUnsigned) > 0;
+
+  MysqlType get mysqlType => MysqlType(fieldType, unsigned, length, decimals);
+
+  @override
+  String toString() {
+    return props.toString();
+  }
+}
+
+class ResultSetTextRow {
+  static const fieldColumns = "columns";
+
+  static Future<ResultSetTextRow> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
+    int numberOfColumns,
+    List<ResultSetColumn> columns,
+  ) async {
+    final props = <String, dynamic>{};
+    final cursor = Cursor.zero();
+    final buffer = await reader.next();
+
+    cursor.increment(standardPacketHeaderLength);
+    props[fieldColumns] = <dynamic>[];
+    for (int i = 0; i < numberOfColumns; i++) {
+      props[fieldColumns]
+          .add(decodeForText(buffer, columns[i].mysqlType, cursor));
+    }
+
+    return ResultSetTextRow._internal(props);
+  }
+
+  final Map<String, dynamic> props;
+
+  const ResultSetTextRow._internal(this.props);
+
+  List<dynamic> get columns => props[fieldColumns];
+
+  @override
+  String toString() {
+    return props.toString();
+  }
+}
+
+class ResultSetBinaryRow {
+  static const fieldNullBitmap = "nullBitmap";
+  static const fieldColumns = "columns";
+
+  static Future<ResultSetBinaryRow> readAndParse(
+    PacketStreamReader reader,
+    NegotiationState negotiationState,
+    int numberOfColumns,
+    List<ResultSetColumn> columns,
+  ) async {
+    final props = <String, dynamic>{};
+    final cursor = Cursor.zero();
+    final buffer = await reader.next();
+
+    cursor.increment(standardPacketHeaderLength);
+    cursor.increment(1); // discard leading byte
+    props[fieldNullBitmap] = Bitmap.from(
+      readBytes(buffer, cursor, ((numberOfColumns + 9) / 8).floor()),
+    );
+    props[fieldColumns] = [];
+    for (int i = 0; i < numberOfColumns; i++) {
+      // Note: For result set row, the first two bits are unused.
+      if (props[fieldNullBitmap].at(2 + i)) {
+        props[fieldColumns].add(null);
+      } else {
+        props[fieldColumns]
+            .add(decodeForBinary(buffer, columns[i].mysqlType, cursor));
+      }
+    }
+
+    return ResultSetBinaryRow._internal(props);
+  }
+
+  final Map<String, dynamic> props;
+
+  const ResultSetBinaryRow._internal(this.props);
+
+  Bitmap get nullBitmap => props[fieldNullBitmap];
+
+  List<dynamic> get columns => props[fieldColumns];
 
   @override
   String toString() {

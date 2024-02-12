@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'packet.dart';
 import 'utils.dart';
 
 class PacketCompressor {
@@ -37,14 +36,14 @@ class PacketCompressor {
               writer, sequence++, payloadWriter.takeBytes(), threshold);
         } else if (remaining > payloadRemaining) {
           payloadWriter.add(
-              getRangeEfficiently(buffer, offset, offset + payloadRemaining));
+              getUnmodifiableRangeEfficiently(buffer, offset, offset + payloadRemaining));
           _compressAndPack(
               writer, sequence++, payloadWriter.takeBytes(), threshold);
           offset += payloadRemaining;
           remaining -= payloadRemaining;
         } else {
           payloadWriter
-              .add(getRangeEfficiently(buffer, offset, offset + remaining));
+              .add(getUnmodifiableRangeEfficiently(buffer, offset, offset + remaining));
           offset += remaining;
           remaining = 0;
         }
@@ -99,10 +98,10 @@ class PacketCompressor {
       final start = cursor.position;
       final end = start + compressedLength;
       if (uncompressedLength == 0) {
-        writer.add(getRangeEfficiently(buffer, start, end));
+        writer.add(getUnmodifiableRangeEfficiently(buffer, start, end));
       } else {
         final decompressed =
-            zlib.decode(getRangeEfficiently(buffer, start, end));
+            zlib.decode(getUnmodifiableRangeEfficiently(buffer, start, end));
         assert(
           decompressed.length == uncompressedLength,
           "decompressed payload held an incorrect length",

@@ -1,4 +1,4 @@
-abstract interface class SessionState {
+abstract interface class NegotiationState {
   int get protocolVersion;
 
   String get serverVersion;

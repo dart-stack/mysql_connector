@@ -9,21 +9,21 @@ final class Debug extends CommandBase<DebugParams, void> {
 
   @override
   Future<void> execute(DebugParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x0D)
-          ..terminated()
-      ]);
+          ..terminate()
+      );
 
-      final packet = await socketReader.readPacket();
+      final packet = await reader.next();
       switch (packet[4]) {
         case 0x00:
           return;
 
         case 0xFF:
-          final err = ErrPacket.from(packet, session);
+          final err = ErrPacket.parse(packet, negotiationState);
           throw MysqlExecutionException(
             err.errorCode,
             err.errorMessage,
@@ -31,7 +31,7 @@ final class Debug extends CommandBase<DebugParams, void> {
           );
       }
     } finally {
-      release();
+      leave();
     }
   }
 }

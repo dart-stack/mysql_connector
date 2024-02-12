@@ -8,22 +8,22 @@ final class Statistics extends CommandBase<StatisticsParams, String> {
 
   @override
   Future<String> execute(StatisticsParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x09)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
-      final packet = await socketReader.readPacket();
+      final packet = await reader.next();
       return readString(
         packet,
         Cursor.from(standardPacketHeaderLength),
         packet.length - standardPacketHeaderLength,
       );
     } finally {
-      release();
+      leave();
     }
   }
 }

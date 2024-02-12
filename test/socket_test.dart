@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:mockito/mockito.dart';
 import 'package:mysql_connector/src/compression.dart';
+import 'package:mysql_connector/src/sequence.dart';
 import 'package:mysql_connector/src/socket.dart';
 import 'package:test/test.dart';
 
@@ -10,26 +11,26 @@ import 'session.dart';
 
 typedef InboundPacketStreamTransformerAndDeps = (
   InboundPacketStreamTransformer,
-  MockSessionState,
+  MockNegotiationState,
   MockMetricsCollector,
 );
 
 void main() {
-  group("InboundPacketStreamTransformer", () {
+  group("InboundPacketProcessor", () {
     InboundPacketStreamTransformerAndDeps createTransformerAndDeps({
       bool enableMetrics = false,
     }) {
-      final sessionState = MockSessionState();
+      final negotiationState = MockNegotiationState();
       final metricsCollector = MockMetricsCollector();
       final transformer = InboundPacketStreamTransformer(
-        sessionState,
-        PacketCompressor(),
+        negotiationState,
+        PacketSequenceManager(),
         enableMetrics,
         metricsCollector,
         0xffffffff,
       );
 
-      return (transformer, sessionState, metricsCollector);
+      return (transformer, negotiationState, metricsCollector);
     }
 
     test("receiving 1 standard packet", () async {
@@ -95,7 +96,7 @@ void main() {
       );
     });
 
-    test("receiving 2 compressed packets that each include 1 standard packet",
+    test("receiving 2 compressed packets that each one includes 1 standard packet",
         () async {
       final deps = createTransformerAndDeps();
       final controller = StreamController<List<int>>();
@@ -121,7 +122,7 @@ void main() {
       );
     });
 
-    test("receiving 2 compressed packets that each include 2 standard packets",
+    test("receiving 2 compressed packets that each one includes 2 standard packets",
         () async {
       final deps = createTransformerAndDeps();
       final controller = StreamController<List<int>>();

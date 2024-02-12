@@ -1,24 +1,28 @@
+import 'package:mysql_connector/src/logging.dart';
+
 import '../command.dart';
 
 typedef PingParams = ();
 
 final class Ping extends CommandBase<PingParams, void> {
+  final Logger _logger = LoggerFactory.createLogger(name: "Ping");
+
   Ping(CommandContext context) : super(context);
 
   @override
   Future<void> execute(PingParams params) async {
-    await acquire();
+    await enter();
 
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x0e)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
-      print(await socketReader.packetReader.readInteger(1));
+      _logger.debug(await reader.next());
     } finally {
-      release();
+      leave();
     }
   }
 }

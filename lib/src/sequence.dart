@@ -1,5 +1,8 @@
 import 'utils.dart';
 
+int _calculateNextSequence(int currentSequence) =>
+    currentSequence == 0xff ? 0 : currentSequence + 1;
+
 class PacketSequenceManager {
   late int _latestStandardPacketSequence;
 
@@ -13,41 +16,21 @@ class PacketSequenceManager {
 
   int get latestCompressedPacketSequence => _latestCompressedPacketSequence;
 
-  int get nextStandardPacketSequence {
-    if (_latestStandardPacketSequence == 0xff) {
-      return 0;
-    }
-    return _latestStandardPacketSequence + 1;
-  }
+  int get nextStandardPacketSequence => _calculateNextSequence(_latestStandardPacketSequence);
 
-  int get nextCompressedPacketSequence {
-    if (_latestCompressedPacketSequence == 0xff) {
-      return 0;
-    }
-    return _latestCompressedPacketSequence + 1;
-  }
+  int get nextCompressedPacketSequence => _calculateNextSequence(_latestCompressedPacketSequence);
 
   void resetSequence() {
     _latestStandardPacketSequence = -1;
     _latestCompressedPacketSequence = -1;
   }
 
-  int increaseAndGetStandardPacketSequence() {
-    if (_latestStandardPacketSequence == 0xff) {
-      _latestStandardPacketSequence = 0;
-    } else {
-      _latestStandardPacketSequence += 1;
-    }
-    return _latestStandardPacketSequence;
+  int incrementAndGetStandardPacketSequence() {
+    return _latestStandardPacketSequence = nextStandardPacketSequence;
   }
 
-  int increaseAndGetCompressedPacketSequence() {
-    if (_latestCompressedPacketSequence == 0xff) {
-      _latestCompressedPacketSequence = 0;
-    } else {
-      _latestCompressedPacketSequence += 1;
-    }
-    return _latestCompressedPacketSequence;
+  int incrementAndGetCompressedPacketSequence() {
+    return _latestCompressedPacketSequence = nextCompressedPacketSequence;
   }
 
   void trackStandardPacketSequence(
@@ -55,11 +38,9 @@ class PacketSequenceManager {
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
-
-    final ranges = IterableStandardPacketRanges(buffer, cursor);
-    for (final range in ranges) {
+    for (final (start, _) in traverseStandardPackets(buffer, cursor)) {
       _latestStandardPacketSequence =
-          buffer[range.$1 + standardPacketSequenceOffset];
+          buffer[start + standardPacketSequenceOffset];
     }
   }
 
@@ -68,11 +49,9 @@ class PacketSequenceManager {
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
-
-    final ranges = CompressedPacketRangeIterable(buffer, cursor);
-    for (final range in ranges) {
+    for (final (start, _) in traverseCompressedPackets(buffer, cursor)) {
       _latestCompressedPacketSequence =
-          buffer[range.$1 + compressedPacketSequenceOffset];
+          buffer[start + compressedPacketSequenceOffset];
     }
   }
 
@@ -81,11 +60,9 @@ class PacketSequenceManager {
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
-
-    final ranges = IterableStandardPacketRanges(buffer, cursor);
-    for (final range in ranges) {
-      buffer[range.$1 + standardPacketSequenceOffset] =
-          increaseAndGetStandardPacketSequence();
+    for (final (start, _) in traverseStandardPackets(buffer, cursor)) {
+      buffer[start + standardPacketSequenceOffset] =
+          incrementAndGetStandardPacketSequence();
     }
   }
 
@@ -94,11 +71,9 @@ class PacketSequenceManager {
     Cursor? cursor,
   ]) {
     cursor ??= Cursor.zero();
-
-    final ranges = CompressedPacketRangeIterable(buffer, cursor);
-    for (final range in ranges) {
-      buffer[range.$1 + compressedPacketSequenceOffset] =
-          increaseAndGetCompressedPacketSequence();
+    for (final (start, _) in traverseCompressedPackets(buffer, cursor)) {
+      buffer[start + compressedPacketSequenceOffset] =
+          incrementAndGetCompressedPacketSequence();
     }
   }
 }

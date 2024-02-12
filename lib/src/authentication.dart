@@ -1,10 +1,10 @@
 import 'package:crypto/crypto.dart';
 
 class MysqlNativePasswordAuthPlugin {
-  static List<int> encrypt(String password, String salt) {
+  static List<int> encrypt(String password, List<int> salt) {
     final u = sha1.convert(password.codeUnits).bytes;
     final v = sha1.convert(u).bytes;
-    final w = sha1.convert(salt.codeUnits + v).bytes;
+    final w = sha1.convert(salt + v).bytes;
     return _xor(u, w);
   }
 

@@ -9,22 +9,22 @@ final class SetOption extends CommandBase<ProcessKillParams, void> {
 
   @override
   Future<void> execute(ProcessKillParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x0C)
           ..addInteger(4, params.processId)
-          ..terminated(),
-      ]);
+          ..terminate(),
+      );
 
-      final packet = await socketReader.readPacket();
+      final packet = await reader.next();
       switch (packet[4]) {
         case 0x00:
           return;
 
         case 0xFF:
-          final err = ErrPacket.from(packet, session);
+          final err = ErrPacket.parse(packet, negotiationState);
           throw MysqlExecutionException(
             err.errorCode,
             err.errorMessage,
@@ -32,7 +32,7 @@ final class SetOption extends CommandBase<ProcessKillParams, void> {
           );
       }
     } finally {
-      release();
+      leave();
     }
   }
 }

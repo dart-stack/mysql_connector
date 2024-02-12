@@ -7,16 +7,16 @@ final class ResetConnection extends CommandBase<ResetConnectionParams, void> {
 
   @override
   Future<void> execute(ResetConnectionParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x1F)
-          ..terminated(),
-      ]);
-      await socketReader.readPacket();
+          ..terminate(),
+      );
+      await reader.next();
     } finally {
-      release();
+      leave();
     }
   }
 }

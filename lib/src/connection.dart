@@ -32,7 +32,6 @@ class ConnectionFactory {
     int maxPacketSize = 0xffffff,
   }) async {
     final conn = Connection(
-      ConsoleLogger(),
       PacketCompressor(),
       PacketSequenceManager(),
       ConnectOptions(
@@ -59,7 +58,7 @@ enum ConnectionState {
 }
 
 class Connection {
-  final Logger _logger;
+  final Logger _logger = LoggerFactory.createLogger(name: "Connection");
 
   final PacketCompressor _packetCompressor;
 
@@ -75,20 +74,21 @@ class Connection {
 
   late PacketSocket _socket;
 
+  late PacketStreamReader _packetStreamReader;
+
   late ConnectionState _connectionState;
 
-  late _SessionState _sessionState;
+  late _NegotiationState _negotiationState;
 
   late _CommandContext _commandContext;
 
   Connection(
-    this._logger,
     this._packetCompressor,
     this._sequenceManager,
     this._connectOptions,
   );
 
-  SessionState get sessionState => _sessionState;
+  NegotiationState get negotiationState => _negotiationState;
 
   CommandContext get commandContext => _commandContext;
 
@@ -97,7 +97,7 @@ class Connection {
   }
 
   void _reset() {
-    _sessionState = _SessionState();
+    _negotiationState = _NegotiationState();
     _connectionState = ConnectionState.connecting;
 
     final ex = MysqlConnectionResetException();
@@ -105,7 +105,7 @@ class Connection {
     _writeLock.reset(ex);
   }
 
-  Future<Socket> _createSocketAndConnect() async {
+  Future<Socket> _createRawSocketAndConnect() async {
     return Socket.connect(
       _connectOptions.host,
       _connectOptions.port,
@@ -114,10 +114,8 @@ class Connection {
 
   PacketSocket _createPacketSocket(Socket rawSocket, int receiveBufferSize) {
     return PacketSocket(
-      logger: _logger,
-      packetCompressor: _packetCompressor,
       sequenceManager: _sequenceManager,
-      session: sessionState,
+      negotiationState: negotiationState,
       rawSocket: rawSocket,
       receiveBufferSize: receiveBufferSize,
     );
@@ -126,20 +124,21 @@ class Connection {
   Future<void> connect() async {
     _reset();
 
-    _sessionState = _SessionState();
+    _negotiationState = _NegotiationState();
     _commandContext = _CommandContext(this);
-    _rawSocket = await _createSocketAndConnect();
+    _rawSocket = await _createRawSocketAndConnect();
     _socket = _createPacketSocket(_rawSocket, 1024 * 1024 * 1);
+    _packetStreamReader = PacketStreamReader(_socket.stream);
     try {
       _setConnectionState(ConnectionState.connecting);
       final handshaker = Handshaker(
-        _logger,
         _socket,
-        _sessionState,
-        _sessionState,
+        _packetStreamReader,
+        _negotiationState,
+        _negotiationState,
         _connectOptions,
       );
-      await handshaker.perform();
+      await handshaker.process();
       _setConnectionState(ConnectionState.active);
     } on MysqlHandshakeException {
       _setConnectionState(ConnectionState.closed);
@@ -153,21 +152,20 @@ class Connection {
   }
 
   void endCommand() {
-    _socket.gc();
     _sequenceManager.resetSequence();
     _writeLock.release();
   }
 
-  void sendCommand(List<PacketBuilder> commands) {
-    _socket.sendCommand(commands);
+  void sendPacket(PacketBuilder command) {
+    _socket.writePacketWithBuilder(command);
   }
 
   PacketBuilder createPacket() {
     return PacketBuilder(
       encoding: utf8,
-      maxPacketSize: _sessionState.compressionEnabled
-          ? _sessionState.maxPacketSize - standardPacketHeaderLength
-          : _sessionState.maxPacketSize,
+      maxPacketSize: _negotiationState.compressionEnabled
+          ? _negotiationState.maxPacketSize - standardPacketHeaderLength
+          : _negotiationState.maxPacketSize,
     );
   }
 
@@ -190,7 +188,7 @@ class Connection {
   }
 }
 
-class _SessionState implements SessionState, HandshakerDelegate {
+class _NegotiationState implements NegotiationState, HandshakeDelegate {
   int _protocolVersion = 0;
 
   String _serverVersion = "";
@@ -209,7 +207,7 @@ class _SessionState implements SessionState, HandshakerDelegate {
 
   bool _compressionEnabled = false;
 
-  _SessionState();
+  _NegotiationState();
 
   @override
   int get protocolVersion => _protocolVersion;
@@ -295,13 +293,13 @@ class _CommandContext implements CommandContext {
   const _CommandContext(this.connection);
 
   @override
-  Logger get logger => connection._logger;
+  NegotiationState get negotiationState => connection.negotiationState;
 
   @override
-  SessionState get session => connection.sessionState;
+  PacketWriter get writer => connection._socket;
 
   @override
-  PacketSocketReader get socketReader => connection._socket;
+  PacketStreamReader get reader => connection._packetStreamReader;
 
   @override
   PacketBuilder createPacket() {
@@ -319,8 +317,8 @@ class _CommandContext implements CommandContext {
   }
 
   @override
-  void sendCommand(List<PacketBuilder> commands) {
-    return connection.sendCommand(commands);
+  void sendPacket(PacketBuilder builder) {
+    return connection.sendPacket(builder);
   }
 }
 

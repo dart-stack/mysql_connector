@@ -7,17 +7,15 @@ final class Quit extends CommandBase<QuitParams, void> {
 
   @override
   Future<void> execute(QuitParams params) async {
-    await acquire();
+    await enter();
     try {
-      sendCommand([
+      sendPacket(
         createPacket()
           ..addByte(0x01)
-          ..terminated(),
-      ]);
-
-      await socketReader.readPacket();
+          ..terminate(),
+      );
     } finally {
-      release();
+      leave();
     }
   }
 }

@@ -10,6 +10,7 @@ import 'package:mysql_connector/src/datatype.dart';
 import 'package:mysql_connector/src/utils.dart';
 import 'package:test/test.dart';
 
+import 'logging.dart';
 import 'server.dart';
 
 void main() {
@@ -30,13 +31,26 @@ void main() {
   });
 
   group("COM_QUERY", () {
-    group("SELECT", () {
-      test("should be successful", () async {
+    test(
+      "SELECT * FROM users",
+      () async {
         final conn = await connectToServer();
 
         await conn.query("SELECT * FROM users");
-      }, timeout: Timeout(Duration(hours: 1)));
-    });
+      },
+      timeout: Timeout(Duration(hours: 1)),
+    );
+
+    test(
+      "SELECT * FROM tbl1",
+      () async {
+        final conn = await connectToServer();
+
+        await conn.query("SELECT * FROM tbl1");
+      },
+      timeout: Timeout(Duration(hours: 1)),
+    );
+    
 
     test("LOCAL INFILE", () async {
       final conn = await connectToServer();
@@ -49,7 +63,7 @@ void main() {
     test("should be successful", () async {
       final conn = await connectToServer();
 
-      print(await Statistics(conn.commandContext).execute(()));
+      logger.debug(await Statistics(conn.commandContext).execute(()));
     });
   });
 
@@ -85,7 +99,7 @@ void main() {
 
         final result = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users"));
-        print(result.props);
+        logger.debug(result.props);
       });
     });
 
@@ -95,7 +109,7 @@ void main() {
 
         final result = await PrepareStmt(conn.commandContext)
             .execute((sqlStatement: "SELECT * FROM users WHERE id = ?"));
-        print(result.props);
+        logger.debug(result.props);
       });
     });
   });
@@ -156,9 +170,9 @@ void main() {
           types: [
             [mysqlTypeLong, 0]
           ],
-          parameters: [encode(stmt.columns![0].mysqlType, 2)],
+          parameters: [encodeForBinary(stmt.columns![0].mysqlType, 2)],
         ));
-        print(rs);
+        logger.debug(rs);
       });
     });
   });

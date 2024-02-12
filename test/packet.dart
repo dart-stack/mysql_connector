@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:mysql_connector/src/packet.dart';
+import 'package:mysql_connector/src/utils.dart';
+
 
 List<int> generatePackets(
   List<({int length, int sequence})> templates, {
